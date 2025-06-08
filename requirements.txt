@@ -1,0 +1,32 @@
+# Stable Diffusion Image Generator Dependencies
+# Core dependencies for AI image generation application
+
+# Deep Learning Framework
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Hugging Face Ecosystem - Updated for SD 3.5 support
+diffusers>=0.31.0
+transformers>=4.44.0
+accelerate>=0.34.0
+
+# Image Processing
+Pillow>=9.0.0
+opencv-python>=4.7.0
+
+# Scientific Computing
+numpy>=1.21.0
+scipy>=1.9.0
+
+# Utility Libraries
+tqdm>=4.64.0
+requests>=2.28.0
+safetensors>=0.3.0
+
+# System Monitoring
+psutil>=5.9.0
+
+# GUI Framework (PyQt5 Only)
+PyQt5>=5.15.0
+PyQt5-Qt5>=5.15.0
