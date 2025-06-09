@@ -787,22 +787,18 @@ class SDGenerator:
                 "generator": generator,
             }
 
-            # 根据不同的pipeline设置回调函数
-            if "StableDiffusion3" in pipeline_class_name:
-                # SD3 使用新的回调格式
-                def progress_callback_sd3(step, timestep, latents):
-                    self._update_progress(step, num_inference_steps)
+            # 设置进度回调函数 - 使用新的统一格式
+            def progress_callback(pipe, step_index, timestep, callback_kwargs):
+                # 更新进度
+                if num_inference_steps and num_inference_steps > 0:
+                    self._update_progress(step_index + 1, num_inference_steps)
+                return callback_kwargs
 
-                generation_kwargs.update({
-                    "callback_on_step_end": progress_callback_sd3,
-                    "callback_on_step_end_tensor_inputs": ["latents"]
-                })
-            else:
-                # SD1.5/2.x/XL 使用旧的回调格式
-                def progress_callback_legacy(step, timestep, latents):
-                    self._update_progress(step, num_inference_steps)
-
-                generation_kwargs["callback"] = progress_callback_legacy
+            # 使用新的回调格式（兼容所有pipeline）
+            generation_kwargs.update({
+                "callback_on_step_end": progress_callback,
+                "callback_on_step_end_tensor_inputs": ["latents"]
+            })
 
             # 确定使用的精度类型
             if self.device == "cuda":
@@ -913,6 +909,10 @@ class SDGenerator:
     
     def validate_parameters(self, width: int, height: int, steps: int) -> Tuple[bool, str]:
         """验证生成参数"""
+        # 检查参数是否存在
+        if width is None or height is None or steps is None:
+            return False, "参数不完整 (宽度、高度或步数为空)"
+
         # 检查尺寸 - SD 3.5 支持更大尺寸
         if width % 8 != 0 or height % 8 != 0:
             return False, "图片尺寸必须是8的倍数"
