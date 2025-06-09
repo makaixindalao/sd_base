@@ -442,3 +442,66 @@ T5Tokenizer requires the SentencePiece library but it was not found in your envi
 2025-06-09 15:21:21,060 - utils - INFO - 图片生成完成 (耗时: 27.56秒)
 2025-06-09 15:21:21,281 - utils - INFO - 模型已卸载
 2025-06-09 15:22:20,410 - utils - INFO - 模型已卸载
+2025-06-09 15:25:52,553 - utils - INFO - 正在检测设备...
+2025-06-09 15:25:52,554 - utils - INFO - 使用设备: cpu
+2025-06-09 15:25:52,554 - utils - INFO - 正在检查模型: stable-diffusion-v1-5/stable-diffusion-v1-5
+2025-06-09 15:25:52,555 - utils - INFO - 正在检查网络连接...
+2025-06-09 15:25:52,557 - utils - INFO - 使用代理: http://127.0.0.1:7890
+2025-06-09 15:25:52,818 - utils - INFO - 开始下载模型: stable-diffusion-v1-5/stable-diffusion-v1-5
+2025-06-09 15:25:52,818 - utils - INFO - 注意: 首次下载可能需要较长时间（模型约4-5GB）
+2025-06-09 15:25:52,818 - utils - INFO - 设置下载代理: http://127.0.0.1:7890
+2025-06-09 15:25:54,018 - utils - INFO - 模型下载完成
+2025-06-09 15:25:54,033 - utils - INFO - 使用CPU模式
+2025-06-09 15:25:54,034 - utils - INFO - 模型加载完成
+2025-06-09 15:26:05,353 - utils - INFO - 开始生成图片 (种子: 4082732176)
+2025-06-09 15:26:55,779 - utils - INFO - 图片生成完成 (耗时: 50.43秒)
+2025-06-09 15:35:35,147 - utils - INFO - 正在检测设备...
+2025-06-09 15:35:35,148 - utils - INFO - 使用设备: cpu
+2025-06-09 15:35:35,148 - utils - INFO - 正在检查模型: stable-diffusion-v1-5/stable-diffusion-v1-5
+2025-06-09 15:35:35,148 - utils - INFO - 正在检查网络连接...
+2025-06-09 15:35:35,148 - utils - INFO - 使用代理: http://127.0.0.1:7890
+2025-06-09 15:35:35,348 - utils - INFO - 开始下载模型: stable-diffusion-v1-5/stable-diffusion-v1-5
+2025-06-09 15:35:35,348 - utils - INFO - 注意: 首次下载可能需要较长时间（模型约4-5GB）
+2025-06-09 15:35:35,348 - utils - INFO - 设置下载代理: http://127.0.0.1:7890
+2025-06-09 15:35:36,333 - utils - INFO - 模型下载完成
+2025-06-09 15:35:36,348 - utils - INFO - 使用CPU模式
+2025-06-09 15:35:36,348 - utils - INFO - 模型加载完成
+2025-06-09 15:35:36,349 - utils - INFO - 开始生成图片 (种子: 1145828423)
+2025-06-09 15:36:28,431 - utils - INFO - 图片生成完成 (耗时: 52.08秒)
+2025-06-09 15:37:59,666 - utils - INFO - 开始生成图片 (种子: 1426261095)
+2025-06-09 15:38:52,666 - utils - INFO - 图片生成完成 (耗时: 53.00秒)
+2025-06-09 15:45:51,264 - utils - INFO - PyTorch未安装: No module named 'torch'
+2025-06-09 15:45:51,264 - utils - ERROR - PyTorch导入失败: No module named 'torch'
+2025-06-09 15:48:33,983 - utils - INFO - 成功获取剪贴板实例。
+2025-06-09 15:48:52,615 - utils - INFO - 正在检测设备...
+2025-06-09 15:48:52,647 - utils - INFO - 使用设备: cuda
+2025-06-09 15:48:52,647 - utils - INFO - 应用CUDA优化设置...
+2025-06-09 15:48:52,647 - utils - INFO -   attention_slicing: False
+2025-06-09 15:48:52,647 - utils - INFO -   cpu_offload: False
+2025-06-09 15:48:52,648 - utils - INFO -   low_vram_mode: False
+2025-06-09 15:48:52,648 - utils - INFO -   use_fp16: False
+2025-06-09 15:48:52,648 - utils - INFO -   use_bf16: True
+2025-06-09 15:48:52,648 - utils - INFO -   sequential_cpu_offload: False
+2025-06-09 15:48:52,648 - utils - INFO - GPU: NVIDIA GeForce RTX 4080 SUPER
+2025-06-09 15:48:52,648 - utils - INFO - GPU内存: 16.0 GB
+2025-06-09 15:48:52,648 - utils - INFO - 准备加载模型: stable-diffusion-v1-5/stable-diffusion-v1-5
+2025-06-09 15:48:52,648 - utils - INFO - 正在检查网络连接...
+2025-06-09 15:48:52,648 - utils - INFO - 使用代理: http://127.0.0.1:7890
+2025-06-09 15:48:52,990 - utils - INFO - 开始下载模型: stable-diffusion-v1-5/stable-diffusion-v1-5
+2025-06-09 15:48:52,990 - utils - INFO - 注意: 首次下载可能需要较长时间（模型约4-5GB）
+2025-06-09 15:48:52,990 - utils - INFO - 设置下载代理: http://127.0.0.1:7890
+2025-06-09 15:48:58,943 - utils - INFO - 模型下载完成
+2025-06-09 15:48:58,943 - utils - INFO - 正在初始化和加载模型...
+2025-06-09 15:48:59,173 - utils - INFO - 模型加载失败: Pipeline <class 'diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3.StableDiffusion3Pipeline'> expected ['feature_extractor', 'image_encoder', 'scheduler', 'text_encoder', 'text_encoder_2', 'text_encoder_3', 'tokenizer', 'tokenizer_2', 'tokenizer_3', 'transformer', 'vae'], but only {'scheduler', 'feature_extractor', 'text_encoder', 'tokenizer', 'vae'} were passed.
+2025-06-09 15:48:59,173 - utils - ERROR - 模型加载异常: Pipeline <class 'diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3.StableDiffusion3Pipeline'> expected ['feature_extractor', 'image_encoder', 'scheduler', 'text_encoder', 'text_encoder_2', 'text_encoder_3', 'tokenizer', 'tokenizer_2', 'tokenizer_3', 'transformer', 'vae'], but only {'scheduler', 'feature_extractor', 'text_encoder', 'tokenizer', 'vae'} were passed.
+Traceback (most recent call last):
+  File "E:\workspace\test\sd\.\sd_generator.py", line 641, in load_model
+    self.pipeline = StableDiffusion3Pipeline.from_pretrained(
+  File "E:\Program Files\Python38\lib\site-packages\huggingface_hub\utils\_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "E:\Program Files\Python38\lib\site-packages\diffusers\pipelines\pipeline_utils.py", line 1010, in from_pretrained
+    raise ValueError(
+ValueError: Pipeline <class 'diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3.StableDiffusion3Pipeline'> expected ['feature_extractor', 'image_encoder', 'scheduler', 'text_encoder', 'text_encoder_2', 'text_encoder_3', 'tokenizer', 'tokenizer_2', 'tokenizer_3', 'transformer', 'vae'], but only {'scheduler', 'feature_extractor', 'text_encoder', 'tokenizer', 'vae'} were passed.
+2025-06-09 15:48:59,228 - utils - INFO - 模型已卸载
+2025-06-09 15:51:55,960 - utils - INFO - 模型已卸载
+2025-06-09 15:52:00,595 - utils - INFO - 成功获取剪贴板实例。

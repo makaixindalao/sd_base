@@ -97,39 +97,46 @@ def check_dependencies() -> Tuple[bool, List[str]]:
     return len(missing_packages) == 0, missing_packages
 
 def get_optimal_device() -> str:
-    """获取最优设备 - 优化CUDA选择策略"""
+    """获取最优设备 - 优化CUDA选择策略，优先使用GPU"""
     if not TORCH_AVAILABLE:
         print("PyTorch未安装，使用CPU模式")
         return "cpu"
-    
+
     if not torch.cuda.is_available():
         print("CUDA不可用，使用CPU模式")
+        print("提示: 如果您有NVIDIA GPU，请安装CUDA版本的PyTorch以获得更好性能")
         return "cpu"
-    
+
     # 获取GPU信息
     gpu_count = torch.cuda.device_count()
     if gpu_count == 0:
         print("未检测到CUDA设备，使用CPU模式")
         return "cpu"
-    
+
     # 选择最佳GPU（通常是第一个）
     device_id = 0
     gpu_props = torch.cuda.get_device_properties(device_id)
     gpu_memory_gb = gpu_props.total_memory / (1024**3)
     gpu_name = gpu_props.name
-    
-    print(f"检测到GPU: {gpu_name}")
-    print(f"GPU内存: {gpu_memory_gb:.1f}GB")
-    
-    # 更积极的CUDA选择策略
-    if gpu_memory_gb >= 4.0:  # 降低内存要求到4GB
-        print(f"GPU内存充足({gpu_memory_gb:.1f}GB >= 4GB)，使用CUDA加速")
+
+    print(f"🎮 检测到GPU: {gpu_name}")
+    print(f"💾 GPU内存: {gpu_memory_gb:.1f}GB")
+
+    # 更积极的CUDA选择策略 - 只要有GPU就尝试使用
+    if gpu_memory_gb >= 6.0:
+        print(f"✅ GPU内存充足({gpu_memory_gb:.1f}GB >= 6GB)，使用CUDA加速，性能最佳")
         return "cuda"
-    elif gpu_memory_gb >= 2.0:  # 2GB以上也可以尝试CUDA
-        print(f"GPU内存较少({gpu_memory_gb:.1f}GB)，使用CUDA但建议启用低显存模式")
+    elif gpu_memory_gb >= 4.0:
+        print(f"✅ GPU内存良好({gpu_memory_gb:.1f}GB >= 4GB)，使用CUDA加速")
+        return "cuda"
+    elif gpu_memory_gb >= 2.0:
+        print(f"⚠️ GPU内存较少({gpu_memory_gb:.1f}GB)，使用CUDA但将启用低显存优化")
+        return "cuda"
+    elif gpu_memory_gb >= 1.0:
+        print(f"⚠️ GPU内存很少({gpu_memory_gb:.1f}GB)，使用CUDA但性能可能受限")
         return "cuda"
     else:
-        print(f"GPU内存不足({gpu_memory_gb:.1f}GB < 2GB)，建议使用CPU模式")
+        print(f"❌ GPU内存不足({gpu_memory_gb:.1f}GB < 1GB)，建议使用CPU模式")
         return "cpu"
 
 def format_memory_size(size_bytes: int) -> str:
