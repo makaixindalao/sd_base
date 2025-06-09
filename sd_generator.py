@@ -7,7 +7,9 @@ Stable Diffusion 图片生成核心模块
 try:
     import torch
     import gc
-    from diffusers import StableDiffusion3Pipeline, DPMSolverMultistepScheduler
+    from diffusers import (StableDiffusionPipeline, StableDiffusionXLPipeline, 
+                         StableDiffusion3Pipeline, DPMSolverMultistepScheduler,
+                         AutoencoderKL)
     from diffusers.utils import logging as diffusers_logging
     import numpy as np
 
@@ -27,6 +29,9 @@ from PIL import Image
 
 from config import config
 from utils import logger, get_optimal_device, format_memory_size, get_cuda_optimization_settings
+
+# 导入SD3专用的文本编码器
+from transformers import T5EncoderModel, CLIPTextModelWithProjection
 
 class SDGenerator:
     """Stable Diffusion 图片生成器"""
@@ -575,15 +580,41 @@ class SDGenerator:
                 return True
 
             self._update_status("正在检测设备...")
-            config_device = self.system_config.get("device", "auto")
-            if config_device == "cuda" and not torch.cuda.is_available():
-                self._update_status("配置为CUDA但不可用，回退到CPU")
-                self.device = "cpu"
-            elif config_device == "auto":
+
+            # 智能设备选择
+            config_device = self.system_config["device"]
+            if config_device == "auto":
                 self.device = get_optimal_device()
+            elif config_device == "cuda":
+                # 检查CUDA是否可用
+                if torch.cuda.is_available():
+                    self.device = "cuda"
+                    self._update_status("配置指定使用CUDA，检查CUDA可用性...")
+                else:
+                    self._update_status("配置指定CUDA但CUDA不可用，回退到CPU")
+                    self.device = "cpu"
             else:
                 self.device = config_device
+
             self._update_status(f"使用设备: {self.device}")
+
+            # 获取CUDA优化设置
+            if self.device == "cuda":
+                cuda_settings = get_cuda_optimization_settings()
+                self._update_status("应用CUDA优化设置...")
+
+                # 更新系统配置
+                for key, value in cuda_settings.items():
+                    if key in self.system_config:
+                        self.system_config[key] = value
+                        self._update_status(f"  {key}: {value}")
+
+            # 检查内存
+            if self.device == "cuda":
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory
+                gpu_name = torch.cuda.get_device_name(0)
+                self._update_status(f"GPU: {gpu_name}")
+                self._update_status(f"GPU内存: {format_memory_size(gpu_memory)}")
 
             self._update_status(f"准备加载模型: {model_name}")
             
@@ -600,25 +631,9 @@ class SDGenerator:
             # 统一加载模型
             self._update_status("正在初始化和加载模型...")
             
-            if is_local:
-                if not self._load_local_model(model_name):
-                     return False
-            else:
-                cache_dir = config.get("model.cache_dir")
-                use_safetensors = config.get("model.use_safetensors", True)
-                
-                if self.device == "cuda":
-                    torch_dtype = torch.bfloat16 if self.system_config.get("use_bf16") else torch.float16
-                else:
-                    torch_dtype = torch.float32
-
-                self.pipeline = StableDiffusion3Pipeline.from_pretrained(
-                    model_name,
-                    cache_dir=cache_dir,
-                    torch_dtype=torch_dtype,
-                    use_safetensors=use_safetensors,
-                    local_files_only=True
-                )
+            # 确定pipeline类型并加载
+            if not self._load_pipeline(model_name, is_local):
+                return False
 
             if not self.pipeline:
                 self._update_status("模型Pipeline初始化失败")
@@ -632,8 +647,8 @@ class SDGenerator:
                 if self.system_config.get("enable_xformers"):
                     try:
                         self.pipeline.enable_xformers_memory_efficient_attention()
-                    except ImportError:
-                        self._update_status("xformers未安装，跳过优化")
+                    except (ImportError, AttributeError):
+                        self._update_status("xformers不可用或不受支持，跳过优化")
             
             self.model_loaded = True
             self.current_model_name = model_name
@@ -646,6 +661,81 @@ class SDGenerator:
             self.unload_model()
             return False
     
+    def _load_pipeline(self, model_name: str, is_local: bool) -> bool:
+        """根据模型名称动态选择并加载pipeline"""
+        try:
+            if is_local:
+                return self._load_local_model(model_name)
+
+            # 在线模型处理
+            cache_dir = config.get("model.cache_dir")
+            load_kwargs = {
+                "cache_dir": cache_dir,
+                "torch_dtype": torch.bfloat16 if self.device == "cuda" and self.system_config.get("use_bf16") else torch.float16,
+                "use_safetensors": config.get("model.use_safetensors", True),
+                "local_files_only": not config.get("model.auto_download", True)
+            }
+
+            # 为SD3加载所有文本编码器
+            if "stable-diffusion-3" in model_name:
+                self._update_status("检测到Stable Diffusion 3模型，使用专用加载器...")
+                
+                # SD3需要多个文本编码器，我们需要分别加载它们
+                text_encoder = T5EncoderModel.from_pretrained(
+                    model_name, subfolder="text_encoder_3", cache_dir=cache_dir,
+                    local_files_only=load_kwargs["local_files_only"],
+                    torch_dtype=load_kwargs["torch_dtype"]
+                )
+                text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(
+                    model_name, subfolder="text_encoder_2", cache_dir=cache_dir,
+                    local_files_only=load_kwargs["local_files_only"],
+                    torch_dtype=load_kwargs["torch_dtype"]
+                )
+                
+                # 将加载的组件传递给pipeline
+                load_kwargs.update({
+                    "text_encoder_3": text_encoder,
+                    "text_encoder_2": text_encoder_2,
+                })
+                
+                # SD3的VAE也可能需要单独加载
+                try:
+                    vae = AutoencoderKL.from_pretrained(
+                        model_name, subfolder="vae",  cache_dir=cache_dir,
+                        local_files_only=load_kwargs["local_files_only"],
+                        torch_dtype=load_kwargs["torch_dtype"]
+                    )
+                    load_kwargs["vae"] = vae
+                except Exception:
+                    self._update_status("无法单独加载VAE，将使用默认VAE")
+
+                self.pipeline = StableDiffusion3Pipeline.from_pretrained(
+                    model_name,
+                    **load_kwargs
+                )
+            # 简化版：这里我们先假设一个通用加载器可以工作，后续再细化
+            # 理想情况下，我们应该检查model_index.json来决定pipeline类型
+            else:
+                 # 尝试使用通用的 from_pretrained，这通常可以处理SD1.5/2.1/XL
+                self._update_status("尝试使用通用加载器...")
+                # 这是一个简化的假设，实际可能需要更复杂的逻辑
+                # diffusers没有一个统一的AutoPipeline，所以我们得猜
+                if "xl" in model_name.lower():
+                    pipeline_class = StableDiffusionXLPipeline
+                    self._update_status("推断为XL模型...")
+                else:
+                    pipeline_class = StableDiffusionPipeline
+                    self._update_status("推断为标准模型 (SD1.5/2.x)...")
+                
+                self.pipeline = pipeline_class.from_pretrained(model_name, **load_kwargs)
+
+            return True
+
+        except Exception as e:
+            self._update_status(f"Pipeline加载失败: {e}")
+            logger.error(f"Pipeline加载异常: {e}", exc_info=True)
+            return False
+
     def generate_image(self, 
                       prompt: str,
                       negative_prompt: str = "",
@@ -731,8 +821,9 @@ class SDGenerator:
 
             # 生成图片 - 使用优化的autocast设置
             if self.device == "cuda":
-                # 使用autocast以优化性能
-                with torch.cuda.amp.autocast(dtype=torch.bfloat16 if self.system_config.get("use_bf16") else torch.float16):
+                # 使用autocast以优化性能（使用新的API）
+                autocast_dtype = torch.bfloat16 if self.system_config.get("use_bf16") else torch.float16
+                with torch.amp.autocast('cuda', dtype=autocast_dtype):
                     start_time = time.time()
                     image = self.pipeline(**generation_kwargs).images[0]
                     end_time = time.time()
