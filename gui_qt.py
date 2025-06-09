@@ -20,13 +20,13 @@ try:
         QSplitter, QFrame, QTabWidget, QListWidget, QListWidgetItem
     )
     from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
-    from PyQt5.QtGui import QPixmap, QFont, QIcon, QPalette, QColor
+    from PyQt5.QtGui import (QPixmap, QFont, QIcon, QPalette, QColor, QImage)
     PYQT_AVAILABLE = True
 except ImportError as e:
     PYQT_AVAILABLE = False
     IMPORT_ERROR = str(e)
 
-from PIL import Image, ImageQt
+from PIL import Image
 from sd_generator import SDGenerator
 from config import config
 from utils import (logger, validate_prompt, generate_filename, 
@@ -508,17 +508,17 @@ class SDGeneratorMainWindow(QMainWindow):
         layout.addWidget(preview_label)
         
         # 图片显示区域
-        self.image_label = QLabel()
-        self.image_label.setMinimumSize(400, 400)
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setStyleSheet(
+        self.preview_label = QLabel()
+        self.preview_label.setMinimumSize(400, 400)
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setStyleSheet(
             "QLabel { border: 2px dashed #aaa; background-color: #f5f5f5; }"
         )
-        self.image_label.setText("生成的图片将在这里显示")
+        self.preview_label.setText("生成的图片将在这里显示")
         
         # 滚动区域
         scroll_area = QScrollArea()
-        scroll_area.setWidget(self.image_label)
+        scroll_area.setWidget(self.preview_label)
         scroll_area.setWidgetResizable(True)
         layout.addWidget(scroll_area)
         
@@ -931,23 +931,38 @@ class SDGeneratorMainWindow(QMainWindow):
             self.update_status("图片生成失败")
 
     def display_image(self, image):
-        """显示图片"""
-        # 转换PIL图片为QPixmap
-        qt_image = ImageQt.ImageQt(image)
-        pixmap = QPixmap.fromImage(qt_image)
+        """在预览区域显示图片"""
+        if not image:
+            self.update_status("图片生成失败，无法显示")
+            return
+        
+        try:
+            # 检查并转换图像模式为RGBA
+            if image.mode != "RGBA":
+                image = image.convert("RGBA")
 
-        # 缩放图片以适应显示区域
-        label_size = self.image_label.size()
-        scaled_pixmap = pixmap.scaled(
-            label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
-        )
-
-        self.image_label.setPixmap(scaled_pixmap)
-        self.image_label.setAlignment(Qt.AlignCenter)
+            # 将PIL Image转换为QImage
+            data = image.tobytes("raw", "RGBA")
+            qimage = QImage(data, image.width, image.height, QImage.Format_RGBA8888)
+            
+            # 从QImage创建QPixmap
+            pixmap = QPixmap.fromImage(qimage)
+            
+            # 缩放图片以适应标签大小
+            self.preview_label.setPixmap(pixmap.scaled(
+                self.preview_label.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            ))
+            self.update_status("图片显示完成")
+            self.current_pixmap = pixmap  # 保存当前pixmap以便保存
+        except Exception as e:
+            logger.error(f"显示图片时出错: {e}", exc_info=True)
+            self.update_status(f"显示图片时出错: {e}")
 
     def save_image(self):
-        """保存图片"""
-        if not self.current_image:
+        """保存当前预览的图片"""
+        if not self.current_pixmap:
             QMessageBox.warning(self, "警告", "没有可保存的图片")
             return
 
