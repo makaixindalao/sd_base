@@ -562,176 +562,88 @@ class SDGenerator:
     
     def load_model(self, model_name: str = None) -> bool:
         """加载Stable Diffusion模型"""
-        # 检查依赖
         if not TORCH_AVAILABLE:
-            error_msg = "PyTorch未安装，无法加载模型"
-            self._update_status(error_msg)
-            logger.error(error_msg)
+            self._update_status("PyTorch未安装，无法加载模型")
             return False
 
         try:
             if model_name is None:
                 model_name = config.get("model.name")
 
-            # 检查模型是否已经加载且是同一个模型
-            if (self.model_loaded and 
-                hasattr(self, 'current_model_name') and 
-                self.current_model_name == model_name and
-                self.pipeline is not None):
-                self._update_status(f"模型 {model_name} 已加载，跳过重复加载")
+            if self.model_loaded and self.current_model_name == model_name and self.pipeline is not None:
+                self._update_status(f"模型 {model_name} 已加载")
                 return True
 
             self._update_status("正在检测设备...")
-
-            # 智能设备选择
-            config_device = self.system_config["device"]
-            if config_device == "auto":
+            config_device = self.system_config.get("device", "auto")
+            if config_device == "cuda" and not torch.cuda.is_available():
+                self._update_status("配置为CUDA但不可用，回退到CPU")
+                self.device = "cpu"
+            elif config_device == "auto":
                 self.device = get_optimal_device()
-            elif config_device == "cuda":
-                # 检查CUDA是否可用
-                if torch.cuda.is_available():
-                    self.device = "cuda"
-                    self._update_status("配置指定使用CUDA，检查CUDA可用性...")
-                else:
-                    self._update_status("配置指定CUDA但CUDA不可用，回退到CPU")
-                    self.device = "cpu"
             else:
                 self.device = config_device
-
             self._update_status(f"使用设备: {self.device}")
 
-            # 获取CUDA优化设置
-            if self.device == "cuda":
-                cuda_settings = get_cuda_optimization_settings()
-                self._update_status("应用CUDA优化设置...")
-                
-                # 更新系统配置
-                for key, value in cuda_settings.items():
-                    if key in self.system_config:
-                        self.system_config[key] = value
-                        self._update_status(f"  {key}: {value}")
-
-            # 检查内存
-            if self.device == "cuda":
-                gpu_memory = torch.cuda.get_device_properties(0).total_memory
-                gpu_name = torch.cuda.get_device_name(0)
-                self._update_status(f"GPU: {gpu_name}")
-                self._update_status(f"GPU内存: {format_memory_size(gpu_memory)}")
-
-            self._update_status(f"正在检查模型: {model_name}")
-
-            # 检查是否是本地模型
-            if self._is_local_model(model_name):
-                # 加载本地模型，跳过网络检查
-                if not self._load_local_model(model_name):
-                    return False
-            else:
-                # 在线模型处理 - 优化网络检查顺序
-                if self._check_model_cached(model_name):
-                    self._update_status("发现本地缓存，正在加载...")
-                    try:
-                        # 尝试从本地缓存加载
-                        cache_dir = config.get("model.cache_dir")
-                        use_safetensors = config.get("model.use_safetensors", True)
-
-                        # 根据设备选择数据类型
-                        if self.device == "cuda":
-                            if self.system_config.get("use_bf16", True):
-                                torch_dtype = torch.bfloat16
-                                self._update_status("使用BFloat16精度")
-                            elif self.system_config.get("use_fp16", False):
-                                torch_dtype = torch.float16
-                                self._update_status("使用Float16精度")
-                            else:
-                                torch_dtype = torch.float32
-                                self._update_status("使用Float32精度")
-                        else:
-                            torch_dtype = torch.float32
-
-                        self.pipeline = StableDiffusion3Pipeline.from_pretrained(
-                            model_name,
-                            cache_dir=cache_dir,
-                            torch_dtype=torch_dtype,
-                            use_safetensors=use_safetensors,
-                            local_files_only=True  # 仅使用本地文件
-                        )
-                        
-                        # 本地缓存加载成功，跳过网络检查
-                        self._update_status("本地缓存加载成功")
-                        
-                    except Exception as e:
-                        self._update_status(f"本地缓存加载失败: {str(e)}")
-                        # 只有在本地缓存加载失败时才进行网络检查和下载
-                        auto_download = config.get("model.auto_download", True)
-                        if auto_download:
-                            self._update_status("本地缓存损坏，准备重新下载...")
-                            if not self._download_model_with_progress(model_name):
-                                return False
-                        else:
-                            error_msg = f"本地缓存损坏且自动下载已禁用: {model_name}"
-                            self._update_status(error_msg)
-                            logger.error(error_msg)
-                            return False
-                else:
-                    # 模型未缓存，需要下载
-                    auto_download = config.get("model.auto_download", True)
-                    if auto_download:
-                        if not self._download_model_with_progress(model_name):
-                            return False
-                    else:
-                        error_msg = f"模型 {model_name} 未找到，且自动下载已禁用"
-                        self._update_status(error_msg)
-                        logger.error(error_msg)
-                        return False
+            self._update_status(f"准备加载模型: {model_name}")
             
-            # 应用CUDA优化设置
+            # 检查模型是否需要下载
+            is_local = self._is_local_model(model_name)
+            if not is_local and not self._check_model_cached(model_name):
+                if config.get("model.auto_download", True):
+                    if not self._download_model_with_progress(model_name):
+                        return False
+                else:
+                    self._update_status(f"模型未缓存且自动下载已禁用")
+                    return False
+            
+            # 统一加载模型
+            self._update_status("正在初始化和加载模型...")
+            
+            if is_local:
+                if not self._load_local_model(model_name):
+                     return False
+            else:
+                cache_dir = config.get("model.cache_dir")
+                use_safetensors = config.get("model.use_safetensors", True)
+                
+                if self.device == "cuda":
+                    torch_dtype = torch.bfloat16 if self.system_config.get("use_bf16") else torch.float16
+                else:
+                    torch_dtype = torch.float32
+
+                self.pipeline = StableDiffusion3Pipeline.from_pretrained(
+                    model_name,
+                    cache_dir=cache_dir,
+                    torch_dtype=torch_dtype,
+                    use_safetensors=use_safetensors,
+                    local_files_only=True
+                )
+
+            if not self.pipeline:
+                self._update_status("模型Pipeline初始化失败")
+                return False
+
+            # 应用优化并移动到设备
+            self.pipeline.to(self.device)
             if self.device == "cuda":
-                self._update_status("正在应用CUDA优化...")
-                self.pipeline = self.pipeline.to(self.device)
-                
-                # 内存优化设置
-                if self.system_config.get("attention_slicing", True):
+                if self.system_config.get("attention_slicing"):
                     self.pipeline.enable_attention_slicing()
-                    self._update_status("已启用注意力切片")
-                
-                if self.system_config.get("sequential_cpu_offload", False):
-                    self.pipeline.enable_sequential_cpu_offload()
-                    self._update_status("已启用顺序CPU卸载")
-                elif self.system_config.get("cpu_offload", False):
-                    self.pipeline.enable_model_cpu_offload()
-                    self._update_status("已启用模型CPU卸载")
-                
-                # 尝试启用xformers优化
-                if self.system_config.get("enable_xformers", True):
+                if self.system_config.get("enable_xformers"):
                     try:
                         self.pipeline.enable_xformers_memory_efficient_attention()
-                        self._update_status("已启用xformers内存优化")
-                    except Exception as e:
-                        self._update_status(f"xformers优化启用失败: {str(e)}")
-                
-                # 模型编译优化（实验性）
-                if self.system_config.get("compile_model", False):
-                    try:
-                        self.pipeline.unet = torch.compile(self.pipeline.unet)
-                        self._update_status("已启用模型编译优化")
-                    except Exception as e:
-                        self._update_status(f"模型编译优化失败: {str(e)}")
-                        
-            else:
-                self.pipeline = self.pipeline.to("cpu")
-                self._update_status("使用CPU模式")
+                    except ImportError:
+                        self._update_status("xformers未安装，跳过优化")
             
             self.model_loaded = True
-            # 记录当前加载的模型名称
             self.current_model_name = model_name
             self._update_status("模型加载完成")
-            
             return True
-            
+
         except Exception as e:
-            error_msg = f"模型加载失败: {str(e)}"
-            self._update_status(error_msg)
-            logger.error(error_msg)
+            self._update_status(f"模型加载失败: {str(e)}")
+            logger.error(f"模型加载异常: {e}", exc_info=True)
+            self.unload_model()
             return False
     
     def generate_image(self, 
@@ -818,49 +730,33 @@ class SDGenerator:
                 precision_info = "Float32"
 
             # 生成图片 - 使用优化的autocast设置
-            start_time = time.time()
-            
             if self.device == "cuda":
-                with torch.autocast(device_type="cuda", dtype=autocast_dtype, enabled=True):
-                    result = self.pipeline(**generation_kwargs)
-            else:
-                # CPU模式不使用autocast
-                result = self.pipeline(**generation_kwargs)
-            
-            generation_time = time.time() - start_time
-            
-            image = result.images[0]
-            
-            # CUDA内存管理和性能统计
-            if self.device == "cuda":
-                peak_memory = torch.cuda.max_memory_allocated()
-                current_memory = torch.cuda.memory_allocated()
+                # 使用autocast以优化性能
+                with torch.cuda.amp.autocast(dtype=torch.bfloat16 if self.system_config.get("use_bf16") else torch.float16):
+                    start_time = time.time()
+                    image = self.pipeline(**generation_kwargs).images[0]
+                    end_time = time.time()
+
+                # 记录GPU内存使用
+                allocated_mem = torch.cuda.memory_allocated(self.device)
+                reserved_mem = torch.cuda.memory_reserved(self.device)
+                self._update_status(f"生成完成 (耗时: {end_time - start_time:.2f}秒, GPU内存: {format_memory_size(allocated_mem)})")
                 
-                self._update_status(f"峰值GPU内存: {format_memory_size(peak_memory)}")
-                self._update_status(f"当前GPU内存: {format_memory_size(current_memory)}")
-                
-                # 清理GPU内存
+                # 清理GPU缓存
                 torch.cuda.empty_cache()
-                gc.collect()
-                
-                # 重置内存统计
-                torch.cuda.reset_peak_memory_stats()
-            
-            self._update_status(f"图片生成完成 (耗时: {generation_time:.2f}秒)")
-            self._update_progress(100, 100)
-            
+
+            else:  # CPU模式
+                start_time = time.time()
+                image = self.pipeline(**generation_kwargs).images[0]
+                end_time = time.time()
+                self._update_status(f"生成完成 (耗时: {end_time - start_time:.2f}秒)")
+
             return image
             
         except Exception as e:
             error_msg = f"图片生成失败: {str(e)}"
             self._update_status(error_msg)
-            logger.error(error_msg)
-            
-            # 出错时也要清理GPU内存
-            if self.device == "cuda":
-                torch.cuda.empty_cache()
-                gc.collect()
-            
+            logger.error(error_msg, exc_info=True)
             return None
     
     def get_model_info(self) -> Dict[str, Any]:

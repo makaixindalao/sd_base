@@ -327,17 +327,41 @@ def install_dependencies_with_fallback():
     if not upgrade_pip():
         print_progress("pip升级失败，继续使用当前版本")
 
-    # 安装requirements.txt中的依赖
-    success = install_requirements(best_mirror)
+    # 检查是否需要特殊处理PyTorch
+    torch_installed = False
+    try:
+        import torch
+        torch_installed = True
+        print_progress("PyTorch已安装，检查CUDA支持...")
+        if not torch.cuda.is_available():
+            has_cuda, _ = check_cuda_availability()
+            if has_cuda:
+                print_progress("检测到NVIDIA GPU但PyTorch不支持CUDA，将重新安装")
+                # 卸载现有的CPU版本PyTorch
+                subprocess.run([sys.executable, "-m", "pip", "uninstall", "torch", "torchvision", "torchaudio", "-y"],
+                             capture_output=True)
+                torch_installed = False
+    except ImportError:
+        pass
+
+    # 如果PyTorch未安装或需要重新安装，优先安装CUDA版本
+    if not torch_installed:
+        print_progress("安装PyTorch（优先CUDA版本）...")
+        if not install_cuda_pytorch(best_mirror):
+            print_progress("PyTorch安装失败", False)
+            return False
+
+    # 安装requirements.txt中的其他依赖（排除PyTorch相关）
+    success = install_requirements_excluding_torch(best_mirror)
 
     if not success and best_mirror != "default":
         print_progress("使用镜像源安装失败，尝试默认源...")
-        success = install_requirements("default")
+        success = install_requirements_excluding_torch("default")
 
     if not success:
         print_progress("批量安装失败，尝试安装关键依赖...")
         # 尝试安装最关键的依赖
-        critical_packages = ["numpy", "Pillow", "requests", "tqdm"]
+        critical_packages = ["numpy", "Pillow", "requests", "tqdm", "diffusers", "transformers"]
         success_count = 0
 
         for package in critical_packages:
@@ -351,6 +375,80 @@ def install_dependencies_with_fallback():
         success = success_count >= len(critical_packages) * 0.75  # 75%成功率
 
     return success
+
+def install_requirements_excluding_torch(mirror="default"):
+    """安装requirements.txt中的依赖，但排除PyTorch相关包"""
+    requirements_path = Path(REQUIREMENTS_FILE)
+
+    if not requirements_path.exists():
+        print_progress(f"未找到 {REQUIREMENTS_FILE} 文件", False)
+        return False
+
+    print_progress(f"从 {REQUIREMENTS_FILE} 安装依赖（排除PyTorch）...")
+
+    # 读取requirements文件并过滤PyTorch相关包
+    try:
+        with open(requirements_path, 'r', encoding='utf-8') as f:
+            all_requirements = [line.strip() for line in f
+                              if line.strip() and not line.startswith('#')]
+
+        # 过滤掉PyTorch相关包
+        torch_packages = ['torch', 'torchvision', 'torchaudio']
+        requirements = []
+        for req in all_requirements:
+            package_name = req.split('>=')[0].split('==')[0].split('[')[0].strip()
+            if package_name.lower() not in torch_packages:
+                requirements.append(req)
+
+    except Exception as e:
+        print_progress(f"读取 {REQUIREMENTS_FILE} 失败: {e}", False)
+        return False
+
+    if not requirements:
+        print_progress("没有需要安装的其他依赖", True)
+        return True
+
+    print_progress(f"需要安装 {len(requirements)} 个依赖包")
+
+    # 批量安装
+    cmd = [sys.executable, "-m", "pip", "install"]
+
+    if mirror != "default" and mirror in MIRROR_SOURCES:
+        cmd.extend(["-i", MIRROR_SOURCES[mirror]])
+        cmd.append("--trusted-host")
+        host = MIRROR_SOURCES[mirror].split("//")[1].split("/")[0]
+        cmd.append(host)
+
+    cmd.extend(requirements)
+
+    try:
+        print_progress("开始批量安装依赖...")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)  # 30分钟超时
+
+        if result.returncode == 0:
+            print_progress("所有依赖安装成功", True)
+            return True
+        else:
+            print_progress("部分依赖安装失败", False)
+            if result.stderr:
+                print(f"   错误信息: {result.stderr.strip()}")
+
+            # 尝试逐个安装失败的包
+            print_progress("尝试逐个安装依赖...")
+            success_count = 0
+            for req in requirements:
+                if install_package(req, mirror):
+                    success_count += 1
+
+            print_progress(f"成功安装 {success_count}/{len(requirements)} 个依赖")
+            return success_count > len(requirements) * 0.8  # 80%成功率认为可接受
+
+    except subprocess.TimeoutExpired:
+        print_progress("依赖安装超时", False)
+        return False
+    except Exception as e:
+        print_progress(f"依赖安装异常: {e}", False)
+        return False
 
 def check_minimal_dependencies():
     """检查最小依赖是否满足"""
@@ -394,30 +492,125 @@ def create_offline_mode_notice():
     print(notice)
     return True
 
+def check_cuda_availability():
+    """检查系统CUDA环境"""
+    print_progress("检查系统CUDA环境...")
+
+    # 检查NVIDIA驱动
+    try:
+        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            print_progress("检测到NVIDIA GPU驱动", True)
+            # 解析GPU信息
+            lines = result.stdout.split('\n')
+            for line in lines:
+                if 'CUDA Version:' in line:
+                    cuda_version = line.split('CUDA Version:')[1].strip().split()[0]
+                    print_progress(f"系统CUDA版本: {cuda_version}", True)
+                    return True, cuda_version
+            return True, "未知版本"
+        else:
+            print_progress("未检测到NVIDIA GPU或驱动未安装")
+            return False, None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        print_progress("nvidia-smi命令不可用，可能未安装NVIDIA驱动")
+        return False, None
+
+def install_cuda_pytorch(mirror="default"):
+    """安装CUDA版本的PyTorch"""
+    print_progress("尝试安装CUDA版本的PyTorch...")
+
+    # 检查系统CUDA环境
+    has_cuda, cuda_version = check_cuda_availability()
+
+    if not has_cuda:
+        print_progress("系统不支持CUDA，将安装CPU版本PyTorch")
+        return install_package("torch torchvision torchaudio", mirror)
+
+    # 根据CUDA版本选择合适的PyTorch版本
+    cuda_pytorch_urls = {
+        "cu121": "https://download.pytorch.org/whl/cu121",
+        "cu118": "https://download.pytorch.org/whl/cu118",
+        "default": "https://download.pytorch.org/whl/cu121"  # 默认使用CUDA 12.1
+    }
+
+    # 选择CUDA版本
+    if cuda_version and "12.1" in cuda_version:
+        pytorch_url = cuda_pytorch_urls["cu121"]
+        print_progress("检测到CUDA 12.1，安装对应PyTorch版本")
+    elif cuda_version and "11.8" in cuda_version:
+        pytorch_url = cuda_pytorch_urls["cu118"]
+        print_progress("检测到CUDA 11.8，安装对应PyTorch版本")
+    else:
+        pytorch_url = cuda_pytorch_urls["default"]
+        print_progress("使用默认CUDA 12.1版本PyTorch")
+
+    # 安装CUDA版本PyTorch
+    cmd = [sys.executable, "-m", "pip", "install", "torch", "torchvision", "torchaudio", "--index-url", pytorch_url]
+
+    try:
+        print_progress("开始安装CUDA版本PyTorch（可能需要几分钟）...")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)  # 30分钟超时
+
+        if result.returncode == 0:
+            print_progress("CUDA版本PyTorch安装成功", True)
+            return True
+        else:
+            print_progress("CUDA版本PyTorch安装失败，尝试CPU版本", False)
+            if result.stderr:
+                print(f"   错误信息: {result.stderr.strip()}")
+            # 回退到CPU版本
+            return install_package("torch torchvision torchaudio", mirror)
+    except subprocess.TimeoutExpired:
+        print_progress("PyTorch安装超时，尝试CPU版本", False)
+        return install_package("torch torchvision torchaudio", mirror)
+    except Exception as e:
+        print_progress(f"PyTorch安装异常: {e}，尝试CPU版本", False)
+        return install_package("torch torchvision torchaudio", mirror)
+
 def check_torch_cuda():
-    """检查PyTorch CUDA支持"""
-    print_progress("检查PyTorch和CUDA...")
+    """检查PyTorch的CUDA支持，并提供详细诊断"""
+    print_progress("检查PyTorch与CUDA的集成情况...")
     try:
         import torch
         print_progress(f"PyTorch版本: {torch.__version__}", True)
 
         if torch.cuda.is_available():
-            print_progress(f"CUDA可用: {torch.version.cuda}", True)
+            print_progress("PyTorch与CUDA集成正常", True)
             gpu_count = torch.cuda.device_count()
-            print_progress(f"GPU数量: {gpu_count}")
-
+            print_progress(f"检测到 {gpu_count} 个GPU设备")
             for i in range(gpu_count):
                 gpu_name = torch.cuda.get_device_name(i)
                 gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3
-                print_progress(f"GPU {i}: {gpu_name} ({gpu_memory:.1f}GB)")
+                print_progress(f"  - GPU {i}: {gpu_name} ({gpu_memory:.1f}GB)")
+            print_progress("✅ 您的环境已准备好进行GPU加速", True)
         else:
-            print_progress("CUDA不可用，将使用CPU模式")
-            print("   注意: CPU模式生成速度较慢，但功能完整")
+            print_progress("PyTorch未检测到可用的CUDA设备", False)
+            
+            # 深入诊断
+            has_cuda_driver, cuda_version = check_cuda_availability()
+            if has_cuda_driver:
+                print("\n" + "="*20 + "【诊断信息】" + "="*20)
+                print("系统检测到NVIDIA GPU驱动，但PyTorch无法使用它。")
+                print("这通常意味着您安装了CPU版本的PyTorch。")
+                print(f"检测到的驱动CUDA版本: {cuda_version or '未知'}")
+                print("\n【修复建议】")
+                print("1. 卸载当前的PyTorch: ")
+                print(f"   {sys.executable} -m pip uninstall torch torchvision torchaudio")
+                print("\n2. 访问PyTorch官网获取正确的安装命令:")
+                print("   https://pytorch.org/get-started/locally/")
+                print("   请根据您的系统和CUDA版本选择合适的命令进行安装。")
+                print("\n3. 或者，您可以让此脚本尝试自动为您安装:")
+                print("   删除venv虚拟环境(如果使用)，然后重新运行此脚本。")
+                print("="*52 + "\n")
+            else:
+                print("未检测到NVIDIA驱动，程序将以CPU模式运行。")
+                print("如需GPU加速，请先安装NVIDIA官方驱动。")
 
         return True
     except ImportError:
-        print_progress("PyTorch未安装，将在依赖安装阶段处理")
-        return True  # 不阻止继续执行
+        print_progress("PyTorch未安装，将在后续步骤中处理")
+        return True # 不阻止程序继续
 
 def check_system_resources():
     """检查系统资源"""
