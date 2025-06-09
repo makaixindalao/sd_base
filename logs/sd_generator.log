@@ -505,3 +505,62 @@ ValueError: Pipeline <class 'diffusers.pipelines.stable_diffusion_3.pipeline_sta
 2025-06-09 15:48:59,228 - utils - INFO - 模型已卸载
 2025-06-09 15:51:55,960 - utils - INFO - 模型已卸载
 2025-06-09 15:52:00,595 - utils - INFO - 成功获取剪贴板实例。
+2025-06-09 15:52:08,078 - utils - INFO - 正在检测设备...
+2025-06-09 15:52:08,110 - utils - INFO - 使用设备: cuda
+2025-06-09 15:52:08,110 - utils - INFO - 应用CUDA优化设置...
+2025-06-09 15:52:08,110 - utils - INFO -   attention_slicing: False
+2025-06-09 15:52:08,111 - utils - INFO -   cpu_offload: False
+2025-06-09 15:52:08,111 - utils - INFO -   low_vram_mode: False
+2025-06-09 15:52:08,111 - utils - INFO -   use_fp16: False
+2025-06-09 15:52:08,111 - utils - INFO -   use_bf16: True
+2025-06-09 15:52:08,111 - utils - INFO -   sequential_cpu_offload: False
+2025-06-09 15:52:08,111 - utils - INFO - GPU: NVIDIA GeForce RTX 4080 SUPER
+2025-06-09 15:52:08,112 - utils - INFO - GPU内存: 16.0 GB
+2025-06-09 15:52:08,112 - utils - INFO - 准备加载模型: stable-diffusion-v1-5/stable-diffusion-v1-5
+2025-06-09 15:52:08,112 - utils - INFO - 正在检查网络连接...
+2025-06-09 15:52:08,112 - utils - INFO - 使用代理: http://127.0.0.1:7890
+2025-06-09 15:52:13,129 - utils - INFO - 网络连接检查失败: ('Connection aborted.', ConnectionResetError(10054, '远程主机强迫关闭了一个现有的连接。', None, 10054, None))
+2025-06-09 15:52:13,129 - utils - INFO - 网络连接失败，请检查网络设置
+2025-06-09 15:52:22,117 - utils - INFO - 正在检测设备...
+2025-06-09 15:52:22,117 - utils - INFO - 使用设备: cuda
+2025-06-09 15:52:22,118 - utils - INFO - 应用CUDA优化设置...
+2025-06-09 15:52:22,118 - utils - INFO -   attention_slicing: False
+2025-06-09 15:52:22,118 - utils - INFO -   cpu_offload: False
+2025-06-09 15:52:22,118 - utils - INFO -   low_vram_mode: False
+2025-06-09 15:52:22,118 - utils - INFO -   use_fp16: False
+2025-06-09 15:52:22,118 - utils - INFO -   use_bf16: True
+2025-06-09 15:52:22,118 - utils - INFO -   sequential_cpu_offload: False
+2025-06-09 15:52:22,118 - utils - INFO - GPU: NVIDIA GeForce RTX 4080 SUPER
+2025-06-09 15:52:22,118 - utils - INFO - GPU内存: 16.0 GB
+2025-06-09 15:52:22,118 - utils - INFO - 准备加载模型: stable-diffusion-v1-5/stable-diffusion-v1-5
+2025-06-09 15:52:22,118 - utils - INFO - 正在检查网络连接...
+2025-06-09 15:52:22,119 - utils - INFO - 使用代理: http://127.0.0.1:7890
+2025-06-09 15:52:22,475 - utils - INFO - 开始下载模型: stable-diffusion-v1-5/stable-diffusion-v1-5
+2025-06-09 15:52:22,475 - utils - INFO - 注意: 首次下载可能需要较长时间（模型约4-5GB）
+2025-06-09 15:52:22,475 - utils - INFO - 设置下载代理: http://127.0.0.1:7890
+2025-06-09 15:52:24,163 - utils - INFO - 模型下载完成
+2025-06-09 15:52:24,163 - utils - INFO - 正在初始化和加载模型...
+2025-06-09 15:52:24,163 - utils - INFO - 尝试使用通用加载器...
+2025-06-09 15:52:24,163 - utils - INFO - 推断为标准模型 (SD1.5/2.x)...
+2025-06-09 15:52:28,961 - utils - INFO - xformers不可用或不受支持，跳过优化
+2025-06-09 15:52:28,962 - utils - INFO - 模型加载完成
+2025-06-09 15:52:28,976 - utils - INFO - 开始生成图片 (种子: 3077016532)
+2025-06-09 15:52:28,976 - utils - INFO - 初始GPU内存使用: 2.6 GB
+2025-06-09 15:52:28,976 - utils - INFO - 使用BFloat16精度生成
+2025-06-09 15:52:31,802 - utils - INFO - 生成完成 (耗时: 2.82秒, GPU内存: 2.6 GB)
+2025-06-09 15:53:00,989 - utils - INFO - 开始生成图片 (种子: 6735169)
+2025-06-09 15:53:00,990 - utils - INFO - 初始GPU内存使用: 2.6 GB
+2025-06-09 15:53:00,990 - utils - INFO - 使用BFloat16精度生成
+2025-06-09 15:53:03,662 - utils - INFO - 生成完成 (耗时: 2.67秒, GPU内存: 2.6 GB)
+2025-06-09 15:53:06,329 - utils - INFO - 开始生成图片 (种子: 3430352674)
+2025-06-09 15:53:06,329 - utils - INFO - 初始GPU内存使用: 2.6 GB
+2025-06-09 15:53:06,330 - utils - INFO - 使用BFloat16精度生成
+2025-06-09 15:53:08,878 - utils - INFO - 生成完成 (耗时: 2.55秒, GPU内存: 2.6 GB)
+2025-06-09 15:53:11,400 - utils - INFO - 开始生成图片 (种子: 3599886050)
+2025-06-09 15:53:11,400 - utils - INFO - 初始GPU内存使用: 2.6 GB
+2025-06-09 15:53:11,400 - utils - INFO - 使用BFloat16精度生成
+2025-06-09 15:53:13,974 - utils - INFO - 生成完成 (耗时: 2.57秒, GPU内存: 2.6 GB)
+2025-06-09 15:53:21,157 - utils - INFO - 开始生成图片 (种子: 1164789710)
+2025-06-09 15:53:21,157 - utils - INFO - 初始GPU内存使用: 2.6 GB
+2025-06-09 15:53:21,157 - utils - INFO - 使用BFloat16精度生成
+2025-06-09 15:53:23,874 - utils - INFO - 生成完成 (耗时: 2.72秒, GPU内存: 2.6 GB)
