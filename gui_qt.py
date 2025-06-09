@@ -1092,6 +1092,17 @@ def main():
         return 1
 
     app = QApplication(sys.argv)
+
+    # 尝试访问剪贴板，用于调试
+    try:
+        clipboard = app.clipboard()
+        if clipboard is not None:
+            logger.info("成功获取剪贴板实例。")
+        else:
+            logger.warning("QApplication.clipboard() 返回 None。")
+    except Exception as e:
+        logger.error(f"在启动时访问剪贴板失败: {e}", exc_info=True)
+        
     app.setApplicationName("Stable Diffusion 图片生成器")
     app.setApplicationVersion("1.2")
 
