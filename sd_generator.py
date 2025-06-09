@@ -35,6 +35,7 @@ class SDGenerator:
         self.pipeline = None
         self.device = None
         self.model_loaded = False
+        self.current_model_name = None  # 记录当前加载的模型名称
         self.generation_config = config.get_generation_config()
         self.system_config = config.get_system_config()
 
@@ -572,6 +573,14 @@ class SDGenerator:
             if model_name is None:
                 model_name = config.get("model.name")
 
+            # 检查模型是否已经加载且是同一个模型
+            if (self.model_loaded and 
+                hasattr(self, 'current_model_name') and 
+                self.current_model_name == model_name and
+                self.pipeline is not None):
+                self._update_status(f"模型 {model_name} 已加载，跳过重复加载")
+                return True
+
             self._update_status("正在检测设备...")
 
             # 智能设备选择
@@ -617,7 +626,7 @@ class SDGenerator:
                 if not self._load_local_model(model_name):
                     return False
             else:
-                # 在线模型处理
+                # 在线模型处理 - 优化网络检查顺序
                 if self._check_model_cached(model_name):
                     self._update_status("发现本地缓存，正在加载...")
                     try:
@@ -646,10 +655,22 @@ class SDGenerator:
                             use_safetensors=use_safetensors,
                             local_files_only=True  # 仅使用本地文件
                         )
+                        
+                        # 本地缓存加载成功，跳过网络检查
+                        self._update_status("本地缓存加载成功")
+                        
                     except Exception as e:
-                        self._update_status(f"本地缓存损坏，需要重新下载: {str(e)}")
-                        # 如果本地加载失败，尝试下载
-                        if not self._download_model_with_progress(model_name):
+                        self._update_status(f"本地缓存加载失败: {str(e)}")
+                        # 只有在本地缓存加载失败时才进行网络检查和下载
+                        auto_download = config.get("model.auto_download", True)
+                        if auto_download:
+                            self._update_status("本地缓存损坏，准备重新下载...")
+                            if not self._download_model_with_progress(model_name):
+                                return False
+                        else:
+                            error_msg = f"本地缓存损坏且自动下载已禁用: {model_name}"
+                            self._update_status(error_msg)
+                            logger.error(error_msg)
                             return False
                 else:
                     # 模型未缓存，需要下载
@@ -701,6 +722,8 @@ class SDGenerator:
                 self._update_status("使用CPU模式")
             
             self.model_loaded = True
+            # 记录当前加载的模型名称
+            self.current_model_name = model_name
             self._update_status("模型加载完成")
             
             return True
@@ -872,6 +895,7 @@ class SDGenerator:
         
         gc.collect()
         self.model_loaded = False
+        self.current_model_name = None  # 清除当前模型名称
         self._update_status("模型已卸载")
     
     def update_generation_config(self, **kwargs):
