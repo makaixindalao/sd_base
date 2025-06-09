@@ -10,6 +10,16 @@ import random
 from datetime import datetime
 from pathlib import Path
 
+# 导入军事模块
+try:
+    from gui.military_panel import MilitaryGenerationPanel
+    from gui.annotation_panel import AnnotationPanel
+    from gui.dataset_panel import DatasetPanel
+    MILITARY_MODULES_AVAILABLE = True
+except ImportError as e:
+    MILITARY_MODULES_AVAILABLE = False
+    MILITARY_IMPORT_ERROR = str(e)
+
 try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -480,20 +490,71 @@ class SDGeneratorMainWindow(QMainWindow):
         """创建控制面板"""
         control_widget = QWidget()
         parent.addWidget(control_widget)
-        
+
         layout = QVBoxLayout(control_widget)
-        
+
+        # 创建选项卡
+        self.tab_widget = QTabWidget()
+        layout.addWidget(self.tab_widget)
+
+        # 传统SD生成选项卡
+        self.create_traditional_tab()
+
+        # 军事目标生成选项卡
+        if MILITARY_MODULES_AVAILABLE:
+            self.create_military_tabs()
+        else:
+            # 显示军事功能不可用的提示
+            placeholder_tab = QWidget()
+            placeholder_layout = QVBoxLayout(placeholder_tab)
+            placeholder_label = QLabel("军事功能模块不可用\n请检查依赖安装")
+            placeholder_label.setAlignment(Qt.AlignCenter)
+            placeholder_layout.addWidget(placeholder_label)
+            self.tab_widget.addTab(placeholder_tab, "军事功能(不可用)")
+
+    def create_traditional_tab(self):
+        """创建传统SD生成选项卡"""
+        traditional_widget = QWidget()
+        layout = QVBoxLayout(traditional_widget)
+
         # 提示词组
         self.create_prompt_group(layout)
-        
+
         # 参数组
         self.create_parameters_group(layout)
-        
+
         # 控制按钮组
         self.create_control_buttons(layout)
-        
+
         # 添加弹性空间
         layout.addStretch()
+
+        self.tab_widget.addTab(traditional_widget, "传统生成")
+
+    def create_military_tabs(self):
+        """创建军事功能选项卡"""
+        try:
+            # 军事目标生成选项卡
+            self.military_panel = MilitaryGenerationPanel(self.generator)
+            self.tab_widget.addTab(self.military_panel, "军事生成")
+
+            # 标注管理选项卡
+            self.annotation_panel = AnnotationPanel()
+            self.tab_widget.addTab(self.annotation_panel, "自动标注")
+
+            # 数据集管理选项卡
+            self.dataset_panel = DatasetPanel()
+            self.tab_widget.addTab(self.dataset_panel, "数据集管理")
+
+        except Exception as e:
+            logger.error(f"创建军事功能选项卡失败: {e}")
+            # 创建错误提示选项卡
+            error_widget = QWidget()
+            error_layout = QVBoxLayout(error_widget)
+            error_label = QLabel(f"军事功能加载失败:\n{str(e)}")
+            error_label.setAlignment(Qt.AlignCenter)
+            error_layout.addWidget(error_label)
+            self.tab_widget.addTab(error_widget, "军事功能(错误)")
     
     def create_preview_panel(self, parent):
         """创建预览面板"""

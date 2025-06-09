@@ -1,0 +1,24 @@
+Python环境信息
+==================================================
+
+Python版本: 3.8.10 (tags/v3.8.10:3d8993a, May  3 2021, 11:48:03) [MSC v.1928 64 bit (AMD64)]
+Python路径: E:\Program Files\Python38\python.exe
+工作目录: E:\workspace\test\sd
+脚本目录: .
+
+Python路径列表:
+  0: .
+  1: E:\workspace\test\sd
+  2: E:\Program Files\Python38\python38.zip
+  3: E:\Program Files\Python38\DLLs
+  4: E:\Program Files\Python38\lib
+  5: E:\Program Files\Python38
+  6: E:\Program Files\Python38\lib\site-packages
+
+已安装的关键包:
+  ✅ torch
+  ✅ diffusers
+  ✅ PyQt5
+  ✅ ultralytics
+  ✅ numpy
+  ✅ PIL

@@ -566,3 +566,9 @@ ValueError: Pipeline <class 'diffusers.pipelines.stable_diffusion_3.pipeline_sta
 2025-06-09 15:53:23,874 - utils - INFO - 生成完成 (耗时: 2.72秒, GPU内存: 2.6 GB)
 2025-06-09 16:01:31,204 - utils - INFO - 成功获取剪贴板实例。
 2025-06-09 16:01:54,418 - utils - INFO - 模型已卸载
+2025-06-09 19:00:04,056 - utils - INFO - 成功获取剪贴板实例。
+2025-06-09 20:00:30,409 - utils - INFO - 模型已卸载
+2025-06-10 02:16:58,027 - annotation.auto_annotator - INFO - 成功加载检测模型: yolov8n.pt
+2025-06-10 02:17:44,625 - utils - INFO - 成功获取剪贴板实例。
+2025-06-10 02:17:44,810 - annotation.auto_annotator - INFO - 成功加载检测模型: yolov8n.pt
+2025-06-10 02:20:08,357 - annotation.auto_annotator - INFO - 成功加载检测模型: yolov8n.pt

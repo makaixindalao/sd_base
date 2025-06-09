@@ -31,6 +31,37 @@ class Config:
                 "download_timeout": 1800,  # 30分钟超时
                 "max_retries": 3
             },
+            "military": {
+                "targets": ["tank", "aircraft", "ship"],
+                "weather_conditions": ["sunny", "rainy", "snowy", "foggy", "night"],
+                "terrain_types": ["urban", "island", "rural"],
+                "batch_sizes": [1, 10, 50, 100, 500, 1000, 5000, 10000],
+                "generation_modes": ["traditional", "stable_diffusion", "custom_model"],
+                "default_resolution": [512, 512],
+                "max_resolution": [1024, 1024]
+            },
+            "annotation": {
+                "detection_model": "yolov8n",  # 默认检测模型
+                "confidence_threshold": 0.5,
+                "nms_threshold": 0.4,
+                "auto_annotate": True,
+                "bbox_color": "#FF0000",
+                "bbox_thickness": 2,
+                "class_mapping": {
+                    "tank": 0,
+                    "aircraft": 1,
+                    "ship": 2
+                }
+            },
+            "dataset": {
+                "train_split": 0.8,
+                "val_split": 0.1,
+                "test_split": 0.1,
+                "output_format": "coco",
+                "datasets_dir": "datasets",
+                "auto_backup": True,
+                "max_datasets": 50
+            },
             "generation": {
                 "width": 512,
                 "height": 512,
