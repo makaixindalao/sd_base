@@ -97,16 +97,39 @@ def check_dependencies() -> Tuple[bool, List[str]]:
     return len(missing_packages) == 0, missing_packages
 
 def get_optimal_device() -> str:
-    """获取最优设备"""
-    if TORCH_AVAILABLE and torch.cuda.is_available():
-        # 检查GPU内存
-        gpu_memory = torch.cuda.get_device_properties(0).total_memory
-        if gpu_memory >= 6 * 1024**3:  # 6GB
-            return "cuda"
-        else:
-            print(f"GPU内存不足 ({gpu_memory / 1024**3:.1f}GB < 6GB)，建议使用CPU模式")
-            return "cpu"
+    """获取最优设备 - 优化CUDA选择策略"""
+    if not TORCH_AVAILABLE:
+        print("PyTorch未安装，使用CPU模式")
+        return "cpu"
+    
+    if not torch.cuda.is_available():
+        print("CUDA不可用，使用CPU模式")
+        return "cpu"
+    
+    # 获取GPU信息
+    gpu_count = torch.cuda.device_count()
+    if gpu_count == 0:
+        print("未检测到CUDA设备，使用CPU模式")
+        return "cpu"
+    
+    # 选择最佳GPU（通常是第一个）
+    device_id = 0
+    gpu_props = torch.cuda.get_device_properties(device_id)
+    gpu_memory_gb = gpu_props.total_memory / (1024**3)
+    gpu_name = gpu_props.name
+    
+    print(f"检测到GPU: {gpu_name}")
+    print(f"GPU内存: {gpu_memory_gb:.1f}GB")
+    
+    # 更积极的CUDA选择策略
+    if gpu_memory_gb >= 4.0:  # 降低内存要求到4GB
+        print(f"GPU内存充足({gpu_memory_gb:.1f}GB >= 4GB)，使用CUDA加速")
+        return "cuda"
+    elif gpu_memory_gb >= 2.0:  # 2GB以上也可以尝试CUDA
+        print(f"GPU内存较少({gpu_memory_gb:.1f}GB)，使用CUDA但建议启用低显存模式")
+        return "cuda"
     else:
+        print(f"GPU内存不足({gpu_memory_gb:.1f}GB < 2GB)，建议使用CPU模式")
         return "cpu"
 
 def format_memory_size(size_bytes: int) -> str:
@@ -220,6 +243,84 @@ def create_desktop_shortcut(app_path: str, shortcut_name: str = "SD图片生成�
     except Exception as e:
         print(f"创建快捷方式失败: {e}")
         return False
+
+def get_cuda_optimization_settings(device: str = None) -> dict:
+    """获取CUDA优化设置建议"""
+    settings = {
+        "attention_slicing": True,
+        "cpu_offload": False,
+        "low_vram_mode": False,
+        "use_fp16": False,
+        "use_bf16": False,
+        "sequential_cpu_offload": False
+    }
+    
+    if not TORCH_AVAILABLE or not torch.cuda.is_available():
+        return settings
+    
+    try:
+        gpu_props = torch.cuda.get_device_properties(0)
+        gpu_memory_gb = gpu_props.total_memory / (1024**3)
+        gpu_name = gpu_props.name.lower()
+        
+        # 根据GPU内存调整设置
+        if gpu_memory_gb >= 12:
+            # 高端GPU (12GB+)
+            settings.update({
+                "attention_slicing": False,  # 关闭注意力切片以获得更好性能
+                "cpu_offload": False,
+                "low_vram_mode": False,
+                "use_bf16": True,  # 使用bfloat16获得更好性能
+                "sequential_cpu_offload": False
+            })
+        elif gpu_memory_gb >= 8:
+            # 中高端GPU (8-12GB)
+            settings.update({
+                "attention_slicing": True,
+                "cpu_offload": False,
+                "low_vram_mode": False,
+                "use_bf16": True,
+                "sequential_cpu_offload": False
+            })
+        elif gpu_memory_gb >= 6:
+            # 中端GPU (6-8GB)
+            settings.update({
+                "attention_slicing": True,
+                "cpu_offload": True,  # 启用CPU卸载
+                "low_vram_mode": False,
+                "use_fp16": True,  # 使用fp16节省内存
+                "sequential_cpu_offload": False
+            })
+        elif gpu_memory_gb >= 4:
+            # 中低端GPU (4-6GB)
+            settings.update({
+                "attention_slicing": True,
+                "cpu_offload": True,
+                "low_vram_mode": True,  # 启用低显存模式
+                "use_fp16": True,
+                "sequential_cpu_offload": False
+            })
+        else:
+            # 低端GPU (<4GB)
+            settings.update({
+                "attention_slicing": True,
+                "cpu_offload": True,
+                "low_vram_mode": True,
+                "use_fp16": True,
+                "sequential_cpu_offload": True  # 启用顺序CPU卸载
+            })
+        
+        # 特定GPU优化
+        if "rtx" in gpu_name and ("30" in gpu_name or "40" in gpu_name):
+            # RTX 30/40系列支持更好的bf16
+            settings["use_bf16"] = True
+            settings["use_fp16"] = False
+        
+        return settings
+        
+    except Exception as e:
+        print(f"获取CUDA优化设置时出错: {e}")
+        return settings
 
 # 初始化日志
 logger = setup_logging()

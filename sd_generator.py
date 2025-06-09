@@ -26,7 +26,7 @@ from typing import Optional, Dict, Any, Callable, Tuple
 from PIL import Image
 
 from config import config
-from utils import logger, get_optimal_device, format_memory_size
+from utils import logger, get_optimal_device, format_memory_size, get_cuda_optimization_settings
 
 class SDGenerator:
     """Stable Diffusion 图片生成器"""
@@ -574,17 +574,39 @@ class SDGenerator:
 
             self._update_status("正在检测设备...")
 
-            # 确定设备
-            if self.system_config["device"] == "auto":
+            # 智能设备选择
+            config_device = self.system_config["device"]
+            if config_device == "auto":
                 self.device = get_optimal_device()
+            elif config_device == "cuda":
+                # 检查CUDA是否可用
+                if torch.cuda.is_available():
+                    self.device = "cuda"
+                    self._update_status("配置指定使用CUDA，检查CUDA可用性...")
+                else:
+                    self._update_status("配置指定CUDA但CUDA不可用，回退到CPU")
+                    self.device = "cpu"
             else:
-                self.device = self.system_config["device"]
+                self.device = config_device
 
             self._update_status(f"使用设备: {self.device}")
+
+            # 获取CUDA优化设置
+            if self.device == "cuda":
+                cuda_settings = get_cuda_optimization_settings()
+                self._update_status("应用CUDA优化设置...")
+                
+                # 更新系统配置
+                for key, value in cuda_settings.items():
+                    if key in self.system_config:
+                        self.system_config[key] = value
+                        self._update_status(f"  {key}: {value}")
 
             # 检查内存
             if self.device == "cuda":
                 gpu_memory = torch.cuda.get_device_properties(0).total_memory
+                gpu_name = torch.cuda.get_device_name(0)
+                self._update_status(f"GPU: {gpu_name}")
                 self._update_status(f"GPU内存: {format_memory_size(gpu_memory)}")
 
             self._update_status(f"正在检查模型: {model_name}")
@@ -603,10 +625,24 @@ class SDGenerator:
                         cache_dir = config.get("model.cache_dir")
                         use_safetensors = config.get("model.use_safetensors", True)
 
+                        # 根据设备选择数据类型
+                        if self.device == "cuda":
+                            if self.system_config.get("use_bf16", True):
+                                torch_dtype = torch.bfloat16
+                                self._update_status("使用BFloat16精度")
+                            elif self.system_config.get("use_fp16", False):
+                                torch_dtype = torch.float16
+                                self._update_status("使用Float16精度")
+                            else:
+                                torch_dtype = torch.float32
+                                self._update_status("使用Float32精度")
+                        else:
+                            torch_dtype = torch.float32
+
                         self.pipeline = StableDiffusion3Pipeline.from_pretrained(
                             model_name,
                             cache_dir=cache_dir,
-                            torch_dtype=torch.bfloat16 if self.device == "cuda" else torch.float32,
+                            torch_dtype=torch_dtype,
                             use_safetensors=use_safetensors,
                             local_files_only=True  # 仅使用本地文件
                         )
@@ -627,25 +663,42 @@ class SDGenerator:
                         logger.error(error_msg)
                         return False
             
-            # 优化设置
+            # 应用CUDA优化设置
             if self.device == "cuda":
+                self._update_status("正在应用CUDA优化...")
                 self.pipeline = self.pipeline.to(self.device)
                 
-                # 内存优化
+                # 内存优化设置
                 if self.system_config.get("attention_slicing", True):
                     self.pipeline.enable_attention_slicing()
+                    self._update_status("已启用注意力切片")
                 
-                if self.system_config.get("low_vram_mode", False):
+                if self.system_config.get("sequential_cpu_offload", False):
                     self.pipeline.enable_sequential_cpu_offload()
+                    self._update_status("已启用顺序CPU卸载")
                 elif self.system_config.get("cpu_offload", False):
                     self.pipeline.enable_model_cpu_offload()
+                    self._update_status("已启用模型CPU卸载")
+                
+                # 尝试启用xformers优化
+                if self.system_config.get("enable_xformers", True):
+                    try:
+                        self.pipeline.enable_xformers_memory_efficient_attention()
+                        self._update_status("已启用xformers内存优化")
+                    except Exception as e:
+                        self._update_status(f"xformers优化启用失败: {str(e)}")
+                
+                # 模型编译优化（实验性）
+                if self.system_config.get("compile_model", False):
+                    try:
+                        self.pipeline.unet = torch.compile(self.pipeline.unet)
+                        self._update_status("已启用模型编译优化")
+                    except Exception as e:
+                        self._update_status(f"模型编译优化失败: {str(e)}")
+                        
             else:
                 self.pipeline = self.pipeline.to("cpu")
-            
-            # SD 3.5 使用默认调度器，不需要额外设置
-            # self.pipeline.scheduler = DPMSolverMultistepScheduler.from_config(
-            #     self.pipeline.scheduler.config
-            # )
+                self._update_status("使用CPU模式")
             
             self.model_loaded = True
             self._update_status("模型加载完成")
@@ -666,7 +719,7 @@ class SDGenerator:
                       num_inference_steps: int = None,
                       guidance_scale: float = None,
                       seed: int = None) -> Optional[Image.Image]:
-        """生成图片"""
+        """生成图片 - 优化CUDA性能"""
         
         if not self.model_loaded:
             self._update_status("模型未加载")
@@ -688,32 +741,93 @@ class SDGenerator:
             
             self._update_status(f"开始生成图片 (种子: {seed})")
             
-            # 进度回调函数
-            def progress_callback(step, timestep, latents):
-                self._update_progress(step, num_inference_steps)
+            # CUDA性能优化
+            if self.device == "cuda":
+                # 清理GPU内存
+                torch.cuda.empty_cache()
+                
+                # 记录初始内存使用
+                initial_memory = torch.cuda.memory_allocated()
+                self._update_status(f"初始GPU内存使用: {format_memory_size(initial_memory)}")
 
-            # 生成图片 - SD 3.5 参数
-            with torch.autocast(self.device, dtype=torch.bfloat16 if self.device == "cuda" else torch.float32):
-                result = self.pipeline(
-                    prompt=prompt,
-                    negative_prompt=negative_prompt if negative_prompt else None,
-                    width=width,
-                    height=height,
-                    num_inference_steps=num_inference_steps,
-                    guidance_scale=guidance_scale,
-                    generator=generator,
-                    callback_on_step_end=progress_callback,
-                    callback_on_step_end_tensor_inputs=["latents"]
-                )
+            # 根据pipeline类型设置不同的回调函数和参数
+            pipeline_class_name = self.pipeline.__class__.__name__
+
+            # 生成图片参数
+            generation_kwargs = {
+                "prompt": prompt,
+                "negative_prompt": negative_prompt if negative_prompt else None,
+                "width": width,
+                "height": height,
+                "num_inference_steps": num_inference_steps,
+                "guidance_scale": guidance_scale,
+                "generator": generator,
+            }
+
+            # 根据不同的pipeline设置回调函数
+            if "StableDiffusion3" in pipeline_class_name:
+                # SD3 使用新的回调格式
+                def progress_callback_sd3(step, timestep, latents):
+                    self._update_progress(step, num_inference_steps)
+
+                generation_kwargs.update({
+                    "callback_on_step_end": progress_callback_sd3,
+                    "callback_on_step_end_tensor_inputs": ["latents"]
+                })
+            else:
+                # SD1.5/2.x/XL 使用旧的回调格式
+                def progress_callback_legacy(step, timestep, latents):
+                    self._update_progress(step, num_inference_steps)
+
+                generation_kwargs["callback"] = progress_callback_legacy
+
+            # 确定使用的精度类型
+            if self.device == "cuda":
+                if self.system_config.get("use_bf16", True):
+                    autocast_dtype = torch.bfloat16
+                    precision_info = "BFloat16"
+                elif self.system_config.get("use_fp16", False):
+                    autocast_dtype = torch.float16
+                    precision_info = "Float16"
+                else:
+                    autocast_dtype = torch.float32
+                    precision_info = "Float32"
+                
+                self._update_status(f"使用{precision_info}精度生成")
+            else:
+                autocast_dtype = torch.float32
+                precision_info = "Float32"
+
+            # 生成图片 - 使用优化的autocast设置
+            start_time = time.time()
+            
+            if self.device == "cuda":
+                with torch.autocast(device_type="cuda", dtype=autocast_dtype, enabled=True):
+                    result = self.pipeline(**generation_kwargs)
+            else:
+                # CPU模式不使用autocast
+                result = self.pipeline(**generation_kwargs)
+            
+            generation_time = time.time() - start_time
             
             image = result.images[0]
             
-            # 清理GPU内存
+            # CUDA内存管理和性能统计
             if self.device == "cuda":
+                peak_memory = torch.cuda.max_memory_allocated()
+                current_memory = torch.cuda.memory_allocated()
+                
+                self._update_status(f"峰值GPU内存: {format_memory_size(peak_memory)}")
+                self._update_status(f"当前GPU内存: {format_memory_size(current_memory)}")
+                
+                # 清理GPU内存
                 torch.cuda.empty_cache()
                 gc.collect()
+                
+                # 重置内存统计
+                torch.cuda.reset_peak_memory_stats()
             
-            self._update_status("图片生成完成")
+            self._update_status(f"图片生成完成 (耗时: {generation_time:.2f}秒)")
             self._update_progress(100, 100)
             
             return image
@@ -722,6 +836,12 @@ class SDGenerator:
             error_msg = f"图片生成失败: {str(e)}"
             self._update_status(error_msg)
             logger.error(error_msg)
+            
+            # 出错时也要清理GPU内存
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+                gc.collect()
+            
             return None
     
     def get_model_info(self) -> Dict[str, Any]:

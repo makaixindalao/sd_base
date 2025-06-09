@@ -47,10 +47,15 @@ class Config:
                 "auto_save": True
             },
             "system": {
-                "device": "auto",  # auto, cpu, cuda
+                "device": "cuda",  # 改为cuda优先，auto, cpu, cuda
                 "low_vram_mode": False,
                 "attention_slicing": True,
-                "cpu_offload": False
+                "cpu_offload": False,
+                "sequential_cpu_offload": False,  # 新增：顺序CPU卸载
+                "use_fp16": False,  # 新增：使用FP16精度
+                "use_bf16": True,   # 新增：使用BF16精度（RTX30/40系列推荐）
+                "enable_xformers": True,  # 新增：启用xformers优化
+                "compile_model": False    # 新增：模型编译优化（实验性）
             },
             "network": {
                 "proxy_enabled": True,
