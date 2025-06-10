@@ -572,3 +572,12 @@ ValueError: Pipeline <class 'diffusers.pipelines.stable_diffusion_3.pipeline_sta
 2025-06-10 02:17:44,625 - utils - INFO - 成功获取剪贴板实例。
 2025-06-10 02:17:44,810 - annotation.auto_annotator - INFO - 成功加载检测模型: yolov8n.pt
 2025-06-10 02:20:08,357 - annotation.auto_annotator - INFO - 成功加载检测模型: yolov8n.pt
+2025-06-10 10:59:23,913 - utils - INFO - 成功获取剪贴板实例。
+2025-06-10 10:59:24,031 - annotation.auto_annotator - INFO - 成功加载检测模型: yolov8n.pt
+2025-06-10 10:59:48,812 - military.target_generator - INFO - 开始批量生成1张军事目标图像...
+2025-06-10 10:59:48,812 - military.target_generator - INFO - 生成tank图像...
+2025-06-10 10:59:48,812 - utils - INFO - 模型未加载
+2025-06-10 10:59:48,812 - military.target_generator - INFO - 生成tank图像失败
+2025-06-10 10:59:48,812 - military.target_generator - INFO - 已生成 1/1 张图像
+2025-06-10 10:59:48,812 - military.target_generator - INFO - 批量生成完成! 成功: 0/1 (0.0%), 耗时: 0.0秒
+2025-06-10 11:06:00,423 - utils - INFO - 模型已卸载

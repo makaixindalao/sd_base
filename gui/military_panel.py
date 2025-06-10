@@ -1,447 +1,322 @@
 """
-军事目标生成面板
-提供军事目标图像生成的专用界面
+军事场景生成面板
+提供基于图片蒙版（Inpainting）的军事场景生成交互界面
 """
 
 import sys
-import random
 from typing import List, Dict, Optional
 from pathlib import Path
 
 try:
     from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-                                QLabel, QComboBox, QCheckBox, QSpinBox, QPushButton,
-                                QTextEdit, QProgressBar, QGroupBox, QListWidget,
-                                QListWidgetItem, QMessageBox, QFileDialog,
-                                QTabWidget, QScrollArea, QFrame)
-    from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-    from PyQt5.QtGui import QFont, QPixmap, QPalette, QColor
+                                QLabel, QPushButton, QListWidget, QListWidgetItem,
+                                QFileDialog, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
+                                QAbstractItemView, QSplitter, QGroupBox, QSpinBox,
+                                QTextEdit, QMessageBox, QProgressDialog)
+    from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPointF
+    from PyQt5.QtGui import QFont, QPixmap, QImage, QPainter, QColor, QBrush, QPen
     PYQT_AVAILABLE = True
 except ImportError:
     PYQT_AVAILABLE = False
+    # Define placeholders for PyQt classes if not available
+    QWidget = object
+    pyqtSignal = object
+    QThread = object
+
 
 if PYQT_AVAILABLE:
-    from military.target_generator import MilitaryTargetGenerator
-    from military.prompt_templates import PromptTemplateManager
+    from military.scene_generator import MilitarySceneGenerator
     from config import Config
     import logging
 
     logger = logging.getLogger(__name__)
 
-    class MilitaryGenerationThread(QThread):
-        """军事目标生成线程"""
-        progress_updated = pyqtSignal(float)
+    # --- Generation Thread ---
+    class SceneGenerationThread(QThread):
+        """在新线程中运行军事场景生成任务"""
+        generation_completed = pyqtSignal(str)
         status_updated = pyqtSignal(str)
-        generation_completed = pyqtSignal(list)
-        
-        def __init__(self, generator: MilitaryTargetGenerator, generation_params: Dict):
+        progress_updated = pyqtSignal(float)
+
+        def __init__(self, generator: MilitarySceneGenerator, params: dict):
             super().__init__()
             self.generator = generator
-            self.params = generation_params
-            self.is_cancelled = False
-        
-        def run(self):
-            """运行生成任务"""
-            try:
-                # 设置回调
-                self.generator.set_callbacks(
-                    progress_callback=self.progress_updated.emit,
-                    status_callback=self.status_updated.emit
-                )
-                
-                # 执行批量生成
-                results = self.generator.generate_batch_targets(**self.params)
-                
-                if not self.is_cancelled:
-                    self.generation_completed.emit(results)
-                    
-            except Exception as e:
-                self.status_updated.emit(f"生成失败: {str(e)}")
-                logger.error(f"军事目标生成失败: {e}", exc_info=True)
-        
-        def cancel(self):
-            """取消生成"""
-            self.is_cancelled = True
+            self.params = params
 
-    class MilitaryGenerationPanel(QWidget):
-        """军事目标生成面板"""
+        def run(self):
+            try:
+                self.generator.set_callbacks(
+                    status_callback=self.status_updated.emit,
+                    progress_callback=self.progress_updated.emit
+                )
+                filepath = self.generator.generate_scene(**self.params)
+                self.generation_completed.emit(filepath or "")
+            except Exception as e:
+                error_message = f"场景生成时发生意外错误: {e}"
+                self.status_updated.emit(error_message)
+                logger.error(error_message, exc_info=True)
+                self.generation_completed.emit("")
+
+    # --- Draggable Target Item ---
+    class DraggableTarget(QGraphicsPixmapItem):
+        """可拖拽的军事目标图元"""
+        def __init__(self, pixmap: QPixmap, path: str):
+            super().__init__(pixmap)
+            self.path = path
+            self.setFlags(QGraphicsPixmapItem.ItemIsSelectable | QGraphicsPixmapItem.ItemIsMovable)
+            self.setAcceptHoverEvents(True)
         
+        def hoverEnterEvent(self, event):
+            self.setPen(QPen(QColor("yellow"), 2))
+            super().hoverEnterEvent(event)
+        
+        def hoverLeaveEvent(self, event):
+            self.setPen(QPen(Qt.NoPen))
+            super().hoverLeaveEvent(event)
+
+    # --- Main Panel ---
+    class MilitaryPanel(QWidget):
         def __init__(self, sd_generator=None):
             super().__init__()
-            
             if not PYQT_AVAILABLE:
-                raise ImportError("PyQt5不可用")
+                self.setLayout(QVBoxLayout())
+                self.layout().addWidget(QLabel("错误: PyQt5 未安装或加载失败。"))
+                return
             
             self.sd_generator = sd_generator
-            self.military_generator = MilitaryTargetGenerator(sd_generator)
-            self.prompt_manager = PromptTemplateManager()
+            self.scene_generator = MilitarySceneGenerator(self.sd_generator)
             self.config = Config()
             
-            self.generation_thread = None
-            self.current_results = []
-            
+            self.base_scene_path: Optional[str] = None
+            self.target_items: Dict[str, DraggableTarget] = {} # path: item
+
             self.setup_ui()
-            self.load_settings()
-        
+            self.apply_stylesheet()
+
         def setup_ui(self):
-            """设置用户界面"""
-            layout = QVBoxLayout(self)
+            main_layout = QHBoxLayout(self)
+            splitter = QSplitter(Qt.Horizontal)
+
+            # --- Left Panel (Controls) ---
+            left_panel = QWidget()
+            left_layout = QVBoxLayout(left_panel)
+            left_layout.setContentsMargins(10, 10, 10, 10)
+            left_layout.setSpacing(15)
+
+            # Scene Group
+            scene_group = QGroupBox("1. 选择背景场景")
+            scene_layout = QVBoxLayout(scene_group)
+            self.scene_path_label = QLabel("未选择场景文件")
+            self.scene_path_label.setWordWrap(True)
+            self.select_scene_btn = QPushButton("浏览...")
+            self.select_scene_btn.clicked.connect(self.select_base_scene)
+            scene_layout.addWidget(self.scene_path_label)
+            scene_layout.addWidget(self.select_scene_btn)
             
-            # 创建选项卡
-            tab_widget = QTabWidget()
-            
-            # 生成配置选项卡
-            config_tab = self.create_config_tab()
-            tab_widget.addTab(config_tab, "生成配置")
-            
-            # 批量生成选项卡
-            batch_tab = self.create_batch_tab()
-            tab_widget.addTab(batch_tab, "批量生成")
-            
-            # 结果查看选项卡
-            results_tab = self.create_results_tab()
-            tab_widget.addTab(results_tab, "生成结果")
-            
-            layout.addWidget(tab_widget)
-            
-            # 状态栏
-            self.create_status_bar(layout)
-        
-        def create_config_tab(self) -> QWidget:
-            """创建生成配置选项卡"""
-            widget = QWidget()
-            layout = QVBoxLayout(widget)
-            
-            # 目标类型选择
-            target_group = QGroupBox("军事目标类型")
+            # Target Group
+            target_group = QGroupBox("2. 添加并拖拽目标")
             target_layout = QVBoxLayout(target_group)
-            
-            self.target_checkboxes = {}
-            available_targets = self.prompt_manager.get_available_options()["targets"]
-            for target in available_targets:
-                checkbox = QCheckBox(target.upper())
-                checkbox.setChecked(True)
-                self.target_checkboxes[target] = checkbox
-                target_layout.addWidget(checkbox)
-            
-            layout.addWidget(target_group)
-            
-            # 天气条件选择
-            weather_group = QGroupBox("天气条件")
-            weather_layout = QVBoxLayout(weather_group)
-            
-            self.weather_checkboxes = {}
-            available_weather = self.prompt_manager.get_available_options()["weather"]
-            for weather in available_weather:
-                checkbox = QCheckBox(weather.upper())
-                checkbox.setChecked(True)
-                self.weather_checkboxes[weather] = checkbox
-                weather_layout.addWidget(checkbox)
-            
-            layout.addWidget(weather_group)
-            
-            # 地形类型选择
-            terrain_group = QGroupBox("地形类型")
-            terrain_layout = QVBoxLayout(terrain_group)
-            
-            self.terrain_checkboxes = {}
-            available_terrain = self.prompt_manager.get_available_options()["terrain"]
-            for terrain in available_terrain:
-                checkbox = QCheckBox(terrain.upper())
-                checkbox.setChecked(True)
-                self.terrain_checkboxes[terrain] = checkbox
-                terrain_layout.addWidget(checkbox)
-            
-            layout.addWidget(terrain_group)
-            
-            # 生成模式选择
-            mode_group = QGroupBox("生成模式")
-            mode_layout = QVBoxLayout(mode_group)
-            
-            self.mixed_targets_cb = QCheckBox("混合目标随机生成")
-            self.mixed_targets_cb.setChecked(True)
-            mode_layout.addWidget(self.mixed_targets_cb)
-            
-            self.mixed_scenes_cb = QCheckBox("混合场景随机生成")
-            self.mixed_scenes_cb.setChecked(True)
-            mode_layout.addWidget(self.mixed_scenes_cb)
-            
-            layout.addWidget(mode_group)
-            
-            return widget
-        
-        def create_batch_tab(self) -> QWidget:
-            """创建批量生成选项卡"""
-            widget = QWidget()
-            layout = QVBoxLayout(widget)
-            
-            # 生成数量设置
-            count_group = QGroupBox("生成设置")
-            count_layout = QGridLayout(count_group)
-            
-            count_layout.addWidget(QLabel("生成数量:"), 0, 0)
-            self.count_spinbox = QSpinBox()
-            self.count_spinbox.setRange(1, 10000)
-            self.count_spinbox.setValue(10)
-            count_layout.addWidget(self.count_spinbox, 0, 1)
-            
-            # 快速设置按钮
-            quick_buttons_layout = QHBoxLayout()
-            for count in [10, 50, 100, 500, 1000]:
-                btn = QPushButton(f"{count}张")
-                btn.clicked.connect(lambda checked, c=count: self.count_spinbox.setValue(c))
-                quick_buttons_layout.addWidget(btn)
-            count_layout.addLayout(quick_buttons_layout, 1, 0, 1, 2)
-            
-            count_layout.addWidget(QLabel("输出目录:"), 2, 0)
-            self.output_dir_layout = QHBoxLayout()
-            self.output_dir_label = QLabel("outputs/military")
-            self.output_dir_btn = QPushButton("选择")
-            self.output_dir_btn.clicked.connect(self.select_output_directory)
-            self.output_dir_layout.addWidget(self.output_dir_label)
-            self.output_dir_layout.addWidget(self.output_dir_btn)
-            count_layout.addLayout(self.output_dir_layout, 2, 1)
-            
-            layout.addWidget(count_group)
-            
-            # 生成参数设置
-            params_group = QGroupBox("生成参数")
-            params_layout = QGridLayout(params_group)
-            
-            params_layout.addWidget(QLabel("图像宽度:"), 0, 0)
-            self.width_spinbox = QSpinBox()
-            self.width_spinbox.setRange(512, 1024)
-            self.width_spinbox.setValue(512)
-            self.width_spinbox.setSingleStep(64)
-            params_layout.addWidget(self.width_spinbox, 0, 1)
-            
-            params_layout.addWidget(QLabel("图像高度:"), 1, 0)
-            self.height_spinbox = QSpinBox()
-            self.height_spinbox.setRange(512, 1024)
-            self.height_spinbox.setValue(512)
-            self.height_spinbox.setSingleStep(64)
-            params_layout.addWidget(self.height_spinbox, 1, 1)
-            
-            params_layout.addWidget(QLabel("采样步数:"), 2, 0)
-            self.steps_spinbox = QSpinBox()
-            self.steps_spinbox.setRange(10, 50)
-            self.steps_spinbox.setValue(20)
-            params_layout.addWidget(self.steps_spinbox, 2, 1)
-            
-            params_layout.addWidget(QLabel("引导系数:"), 3, 0)
-            self.guidance_spinbox = QSpinBox()
-            self.guidance_spinbox.setRange(1, 20)
-            self.guidance_spinbox.setValue(7)
-            params_layout.addWidget(self.guidance_spinbox, 3, 1)
-            
-            layout.addWidget(params_group)
-            
-            # 控制按钮
-            button_layout = QHBoxLayout()
-            
-            self.generate_btn = QPushButton("开始生成")
+            self.target_list_widget = QListWidget()
+            self.target_list_widget.setToolTip("已添加的目标列表")
+            target_buttons_layout = QHBoxLayout()
+            self.add_target_btn = QPushButton("添加")
+            self.add_target_btn.clicked.connect(self.add_targets)
+            self.remove_target_btn = QPushButton("移除")
+            self.remove_target_btn.clicked.connect(self.remove_selected_target)
+            target_buttons_layout.addWidget(self.add_target_btn)
+            target_buttons_layout.addWidget(self.remove_target_btn)
+            target_layout.addWidget(self.target_list_widget)
+            target_layout.addLayout(target_buttons_layout)
+
+            # Prompt Group
+            prompt_group = QGroupBox("3. 输入融合指令")
+            prompt_layout = QVBoxLayout(prompt_group)
+            self.prompt_input = QTextEdit()
+            self.prompt_input.setPlaceholderText("描述天气、光照和整体风格，例如：\n- a heavy rain, night time, cinematic lighting\n- a sandstorm in desert, photorealistic\n- snowy weather, soft light")
+            self.prompt_input.setFixedHeight(100)
+            prompt_layout.addWidget(self.prompt_input)
+
+            # Generation Group
+            gen_group = QGroupBox("4. 开始生成")
+            gen_layout = QVBoxLayout(gen_group)
+            self.generate_btn = QPushButton("生成场景")
+            self.generate_btn.setObjectName("GenerateButton")
             self.generate_btn.clicked.connect(self.start_generation)
-            self.generate_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
-            button_layout.addWidget(self.generate_btn)
+            gen_layout.addWidget(self.generate_btn)
+
+            left_layout.addWidget(scene_group)
+            left_layout.addWidget(target_group)
+            left_layout.addWidget(prompt_group)
+            left_layout.addWidget(gen_group)
+            left_layout.addStretch()
+
+            # --- Right Panel (Visual Editor) ---
+            right_panel = QWidget()
+            right_layout = QVBoxLayout(right_panel)
+            right_layout.setContentsMargins(0, 0, 0, 0)
             
-            self.cancel_btn = QPushButton("取消生成")
-            self.cancel_btn.clicked.connect(self.cancel_generation)
-            self.cancel_btn.setEnabled(False)
-            button_layout.addWidget(self.cancel_btn)
-            
-            layout.addLayout(button_layout)
-            
-            return widget
+            self.graphics_scene = QGraphicsScene()
+            self.graphics_view = QGraphicsView(self.graphics_scene)
+            self.graphics_view.setRenderHint(QPainter.Antialiasing)
+            self.graphics_view.setRenderHint(QPainter.SmoothPixmapTransform)
+            self.graphics_view.setBackgroundBrush(QBrush(QColor(50, 50, 50)))
+
+            self.scene_pixmap_item = QGraphicsPixmapItem()
+            self.graphics_scene.addItem(self.scene_pixmap_item)
+
+            right_layout.addWidget(self.graphics_view)
+
+            # Add panels to splitter
+            splitter.addWidget(left_panel)
+            splitter.addWidget(right_panel)
+            splitter.setStretchFactor(0, 1)
+            splitter.setStretchFactor(1, 3) # Give more space to the visual editor
+            main_layout.addWidget(splitter)
         
-        def create_results_tab(self) -> QWidget:
-            """创建结果查看选项卡"""
-            widget = QWidget()
-            layout = QVBoxLayout(widget)
+        def apply_stylesheet(self):
+            self.setStyleSheet("""
+                QGroupBox {
+                    font-weight: bold;
+                    border: 1px solid #4A4A4A;
+                    border-radius: 5px;
+                    margin-top: 10px;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    subcontrol-position: top left;
+                    padding: 0 5px;
+                }
+                QPushButton {
+                    padding: 8px;
+                    border-radius: 4px;
+                    background-color: #0078D7;
+                    color: white;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #005A9E;
+                }
+                QPushButton:disabled {
+                    background-color: #555555;
+                }
+                #GenerateButton {
+                    background-color: #107C10; /* Green */
+                }
+                #GenerateButton:hover {
+                    background-color: #0B530B;
+                }
+                QListWidget {
+                    border: 1px solid #4A4A4A;
+                    border-radius: 4px;
+                }
+                QTextEdit, QSpinBox {
+                    border: 1px solid #4A4A4A;
+                    border-radius: 4px;
+                    padding: 5px;
+                }
+            """)
+
+        def select_base_scene(self):
+            filepath, _ = QFileDialog.getOpenFileName(self, "选择背景场景图片", "", "图片文件 (*.png *.jpg *.jpeg)")
+            if not filepath: return
             
-            # 结果列表
-            self.results_list = QListWidget()
-            layout.addWidget(self.results_list)
-            
-            # 结果统计
-            stats_group = QGroupBox("生成统计")
-            stats_layout = QGridLayout(stats_group)
-            
-            self.stats_labels = {
-                "total": QLabel("总数: 0"),
-                "successful": QLabel("成功: 0"),
-                "failed": QLabel("失败: 0"),
-                "time": QLabel("耗时: 0秒")
-            }
-            
-            row = 0
-            for key, label in self.stats_labels.items():
-                stats_layout.addWidget(label, row // 2, row % 2)
-                row += 1
-            
-            layout.addWidget(stats_group)
-            
-            return widget
-        
-        def create_status_bar(self, layout: QVBoxLayout):
-            """创建状态栏"""
-            status_frame = QFrame()
-            status_frame.setFrameStyle(QFrame.StyledPanel)
-            status_layout = QVBoxLayout(status_frame)
-            
-            # 进度条
-            self.progress_bar = QProgressBar()
-            self.progress_bar.setVisible(False)
-            status_layout.addWidget(self.progress_bar)
-            
-            # 状态标签
-            self.status_label = QLabel("就绪")
-            status_layout.addWidget(self.status_label)
-            
-            layout.addWidget(status_frame)
-        
-        def get_selected_targets(self) -> List[str]:
-            """获取选中的目标类型"""
-            return [target for target, checkbox in self.target_checkboxes.items() 
-                   if checkbox.isChecked()]
-        
-        def get_selected_weather(self) -> List[str]:
-            """获取选中的天气条件"""
-            return [weather for weather, checkbox in self.weather_checkboxes.items() 
-                   if checkbox.isChecked()]
-        
-        def get_selected_terrain(self) -> List[str]:
-            """获取选中的地形类型"""
-            return [terrain for terrain, checkbox in self.terrain_checkboxes.items() 
-                   if checkbox.isChecked()]
-        
-        def select_output_directory(self):
-            """选择输出目录"""
-            directory = QFileDialog.getExistingDirectory(self, "选择输出目录")
-            if directory:
-                self.output_dir_label.setText(directory)
-        
-        def start_generation(self):
-            """开始生成"""
-            # 验证选择
-            targets = self.get_selected_targets()
-            if not targets:
-                QMessageBox.warning(self, "警告", "请至少选择一种军事目标类型")
-                return
-            
-            # 准备生成参数
-            generation_params = {
-                "target_types": targets,
-                "weather_conditions": self.get_selected_weather(),
-                "terrain_types": self.get_selected_terrain(),
-                "count": self.count_spinbox.value(),
-                "mixed_targets": self.mixed_targets_cb.isChecked(),
-                "mixed_scenes": self.mixed_scenes_cb.isChecked(),
-                "output_dir": self.output_dir_label.text(),
-                "width": self.width_spinbox.value(),
-                "height": self.height_spinbox.value(),
-                "num_inference_steps": self.steps_spinbox.value(),
-                "guidance_scale": self.guidance_spinbox.value()
-            }
-            
-            # 启动生成线程
-            self.generation_thread = MilitaryGenerationThread(
-                self.military_generator, generation_params
-            )
-            self.generation_thread.progress_updated.connect(self.update_progress)
-            self.generation_thread.status_updated.connect(self.update_status)
-            self.generation_thread.generation_completed.connect(self.on_generation_completed)
-            
-            self.generation_thread.start()
-            
-            # 更新UI状态
-            self.generate_btn.setEnabled(False)
-            self.cancel_btn.setEnabled(True)
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setValue(0)
-        
-        def cancel_generation(self):
-            """取消生成"""
-            if self.generation_thread:
-                self.generation_thread.cancel()
-                self.generation_thread.wait()
-            
-            self.reset_ui_state()
-            self.update_status("生成已取消")
-        
-        def update_progress(self, progress: float):
-            """更新进度"""
-            self.progress_bar.setValue(int(progress))
-        
-        def update_status(self, status: str):
-            """更新状态"""
-            self.status_label.setText(status)
-        
-        def on_generation_completed(self, results: List[Dict]):
-            """生成完成处理"""
-            self.current_results = results
-            self.update_results_display()
-            self.update_statistics()
-            self.reset_ui_state()
-            
-            # 显示完成消息
-            successful_count = sum(1 for r in results if r["success"])
-            QMessageBox.information(
-                self, "生成完成", 
-                f"批量生成完成!\n成功生成: {successful_count}/{len(results)} 张图像"
-            )
-        
-        def update_results_display(self):
-            """更新结果显示"""
-            self.results_list.clear()
-            
-            for result in self.current_results:
-                status_icon = "✅" if result["success"] else "❌"
-                item_text = (f"{status_icon} {result['target_type']} - "
-                           f"{result.get('weather', 'default')} - "
-                           f"{result.get('terrain', 'default')}")
+            self.base_scene_path = filepath
+            pixmap = QPixmap(filepath)
+            self.scene_pixmap_item.setPixmap(pixmap)
+            self.graphics_view.setSceneRect(pixmap.rect())
+            self.scene_path_label.setText(Path(filepath).name)
+
+        def add_targets(self):
+            filepaths, _ = QFileDialog.getOpenFileNames(self, "选择一个或多个目标图片 (PNG格式)", "", "PNG 图片 (*.png)")
+            if not filepaths: return
+
+            for path in filepaths:
+                if path in self.target_items: continue # Avoid duplicates
                 
-                item = QListWidgetItem(item_text)
-                self.results_list.addItem(item)
+                pixmap = QPixmap(path)
+                item = DraggableTarget(pixmap, path)
+                self.graphics_scene.addItem(item)
+                self.target_items[path] = item
+                
+                list_item = QListWidgetItem(Path(path).name)
+                list_item.setData(Qt.UserRole, path)
+                self.target_list_widget.addItem(list_item)
         
-        def update_statistics(self):
-            """更新统计信息"""
-            if not self.current_results:
+        def remove_selected_target(self):
+            selected_items = self.target_list_widget.selectedItems()
+            if not selected_items: return
+
+            for item in selected_items:
+                path = item.data(Qt.UserRole)
+                if path in self.target_items:
+                    self.graphics_scene.removeItem(self.target_items[path])
+                    del self.target_items[path]
+                self.target_list_widget.takeItem(self.target_list_widget.row(item))
+
+        def start_generation(self):
+            if not self.base_scene_path or not self.target_items:
+                QMessageBox.warning(self, "信息不完整", "请先选择一个背景场景并添加至少一个目标。")
                 return
             
-            total = len(self.current_results)
-            successful = sum(1 for r in self.current_results if r["success"])
-            failed = total - successful
-            
-            stats = self.military_generator.get_generation_stats()
-            total_time = stats.get("total_time", 0)
-            
-            self.stats_labels["total"].setText(f"总数: {total}")
-            self.stats_labels["successful"].setText(f"成功: {successful}")
-            self.stats_labels["failed"].setText(f"失败: {failed}")
-            self.stats_labels["time"].setText(f"耗时: {total_time:.1f}秒")
-        
-        def reset_ui_state(self):
-            """重置UI状态"""
+            prompt = self.prompt_input.toPlainText().strip()
+            if not prompt:
+                QMessageBox.warning(self, "信息不完整", "请输入融合指令（Prompt）。")
+                return
+
+            try:
+                base_scene = Image.open(self.base_scene_path)
+                targets_to_generate = []
+                for path, item in self.target_items.items():
+                    target_img = Image.open(path)
+                    pos = item.pos()
+                    targets_to_generate.append({
+                        "image": target_img,
+                        "position": (int(pos.x()), int(pos.y()))
+                    })
+
+                params = {
+                    "base_scene": base_scene,
+                    "targets": targets_to_generate,
+                    "prompt": prompt
+                }
+
+                # Setup and start thread
+                self.progress_dialog = QProgressDialog("正在生成场景...", "取消", 0, 100, self)
+                self.progress_dialog.setWindowTitle("请稍候")
+                self.progress_dialog.setWindowModality(Qt.WindowModal)
+                
+                self.gen_thread = SceneGenerationThread(self.scene_generator, params)
+                self.gen_thread.status_updated.connect(self.progress_dialog.setLabelText)
+                self.gen_thread.progress_updated.connect(lambda p: self.progress_dialog.setValue(int(p)))
+                self.gen_thread.generation_completed.connect(self.on_generation_finished)
+                self.progress_dialog.canceled.connect(self.gen_thread.terminate) # Force stop
+                
+                self.generate_btn.setEnabled(False)
+                self.gen_thread.start()
+                self.progress_dialog.show()
+
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"无法开始生成: {e}")
+
+        def on_generation_finished(self, filepath: str):
+            self.progress_dialog.close()
             self.generate_btn.setEnabled(True)
-            self.cancel_btn.setEnabled(False)
-            self.progress_bar.setVisible(False)
-        
-        def load_settings(self):
-            """加载设置"""
-            military_config = self.config.get("military", {})
-            
-            # 加载默认分辨率
-            default_resolution = military_config.get("default_resolution", [512, 512])
-            self.width_spinbox.setValue(default_resolution[0])
-            self.height_spinbox.setValue(default_resolution[1])
-        
-        def save_settings(self):
-            """保存设置"""
-            # 可以在这里保存用户的选择偏好
-            pass
+
+            if filepath:
+                QMessageBox.information(self, "生成完成", f"场景已成功生成并保存至:\n{filepath}")
+                # Display the image
+                pixmap = QPixmap(filepath)
+                self.scene_pixmap_item.setPixmap(pixmap) # Replace scene with result
+                # Clear targets
+                for item in list(self.target_items.values()):
+                    self.graphics_scene.removeItem(item)
+                self.target_items.clear()
+                self.target_list_widget.clear()
+            else:
+                QMessageBox.warning(self, "生成失败", "无法生成场景，请查看日志获取详细信息。")
 
 else:
     # PyQt5不可用时的占位类
-    class MilitaryGenerationPanel:
+    class MilitaryPanel:
         def __init__(self, *args, **kwargs):
             raise ImportError("PyQt5不可用，无法创建军事生成面板")

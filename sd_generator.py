@@ -9,7 +9,8 @@ try:
     import gc
     from diffusers import (StableDiffusionPipeline, StableDiffusionXLPipeline, 
                          StableDiffusion3Pipeline, DPMSolverMultistepScheduler,
-                         AutoencoderKL)
+                         AutoencoderKL, StableDiffusionInpaintPipeline,
+                         StableDiffusionXLInpaintPipeline)
     from diffusers.utils import logging as diffusers_logging
     import numpy as np
 
@@ -53,6 +54,9 @@ class SDGenerator:
             self._update_status(f"PyTorch未安装: {IMPORT_ERROR}")
             logger.error(f"PyTorch导入失败: {IMPORT_ERROR}")
         
+        # 存储基础pipeline，用于切换
+        self.base_pipeline = None
+
     def set_callbacks(self, progress_callback: Callable = None, status_callback: Callable = None):
         """设置回调函数"""
         self.progress_callback = progress_callback
@@ -231,6 +235,7 @@ class SDGenerator:
                     load_path,
                     **load_kwargs
                 )
+                self.base_pipeline = self.pipeline # 存储基础pipeline
 
                 self._update_status("✅ SafeTensors文件加载成功")
 
@@ -750,109 +755,149 @@ class SDGenerator:
             self._update_status("模型未加载")
             return None
         
+        self._update_status("开始生成图片...")
+
+        # 获取配置
+        config = self.generation_config
+        width = width or config.get("width")
+        height = height or config.get("height")
+        num_inference_steps = num_inference_steps or config.get("steps")
+        guidance_scale = guidance_scale or config.get("cfg_scale")
+
+        # 随机种子
+        if seed is None or seed == -1:
+            seed = random.randint(0, 2**32 - 1)
+        
+        generator = torch.Generator(device=self.device).manual_seed(seed)
+        
+        # 进度回调
+        def progress_callback(step_index, timestep, latents):
+            # 更新进度
+            self._update_progress(step_index + 1, num_inference_steps)
+        
         try:
-            # 使用配置中的默认值
-            width = width or self.generation_config["width"]
-            height = height or self.generation_config["height"]
-            num_inference_steps = num_inference_steps or self.generation_config["num_inference_steps"]
-            guidance_scale = guidance_scale or self.generation_config["guidance_scale"]
+            # 确保是正确的pipeline
+            if not isinstance(self.pipeline, (StableDiffusionPipeline, StableDiffusionXLPipeline, StableDiffusion3Pipeline)):
+                 self._update_status("检测到非标准pipeline，正在切换回基础文生图模式...")
+                 self.pipeline = self.base_pipeline
+                 if not self.pipeline:
+                     self._update_status("错误：基础pipeline未加载，无法切换。")
+                     return None
+
+            with torch.no_grad():
+                image = self.pipeline(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    width=width,
+                    height=height,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    callback_steps=1,
+                    callback=progress_callback
+                ).images[0]
             
-            # 处理种子
-            if seed is None or seed == -1:
-                seed = random.randint(0, 2**32 - 1)
-            
-            # 设置随机种子
-            generator = torch.Generator(device=self.device).manual_seed(seed)
-            
-            self._update_status(f"开始生成图片 (种子: {seed})")
-            
-            # CUDA性能优化
-            if self.device == "cuda":
-                # 清理GPU内存
-                torch.cuda.empty_cache()
-                
-                # 记录初始内存使用
-                initial_memory = torch.cuda.memory_allocated()
-                self._update_status(f"初始GPU内存使用: {format_memory_size(initial_memory)}")
-
-            # 根据pipeline类型设置不同的回调函数和参数
-            pipeline_class_name = self.pipeline.__class__.__name__
-
-            # 生成图片参数
-            generation_kwargs = {
-                "prompt": prompt,
-                "negative_prompt": negative_prompt if negative_prompt else None,
-                "width": width,
-                "height": height,
-                "num_inference_steps": num_inference_steps,
-                "guidance_scale": guidance_scale,
-                "generator": generator,
-            }
-
-            # 设置进度回调函数 - 使用新的统一格式
-            def progress_callback(pipe, step_index, timestep, callback_kwargs):
-                # 更新进度
-                if num_inference_steps and num_inference_steps > 0:
-                    self._update_progress(step_index + 1, num_inference_steps)
-                return callback_kwargs
-
-            # 使用新的回调格式（兼容所有pipeline）
-            generation_kwargs.update({
-                "callback_on_step_end": progress_callback,
-                "callback_on_step_end_tensor_inputs": ["latents"]
-            })
-
-            # 确定使用的精度类型
-            if self.device == "cuda":
-                if self.system_config.get("use_bf16", True):
-                    autocast_dtype = torch.bfloat16
-                    precision_info = "BFloat16"
-                elif self.system_config.get("use_fp16", False):
-                    autocast_dtype = torch.float16
-                    precision_info = "Float16"
-                else:
-                    autocast_dtype = torch.float32
-                    precision_info = "Float32"
-                
-                self._update_status(f"使用{precision_info}精度生成")
-            else:
-                autocast_dtype = torch.float32
-                precision_info = "Float32"
-
-            # 生成图片 - 使用优化的autocast设置
-            if self.device == "cuda":
-                # 使用autocast以优化性能（使用新的API）
-                autocast_dtype = torch.bfloat16 if self.system_config.get("use_bf16") else torch.float16
-                with torch.amp.autocast('cuda', dtype=autocast_dtype):
-                    start_time = time.time()
-                    image = self.pipeline(**generation_kwargs).images[0]
-                    end_time = time.time()
-
-                # 记录GPU内存使用
-                allocated_mem = torch.cuda.memory_allocated(self.device)
-                reserved_mem = torch.cuda.memory_reserved(self.device)
-                self._update_status(f"生成完成 (耗时: {end_time - start_time:.2f}秒, GPU内存: {format_memory_size(allocated_mem)})")
-                
-                # 清理GPU缓存
-                torch.cuda.empty_cache()
-
-            else:  # CPU模式
-                start_time = time.time()
-                image = self.pipeline(**generation_kwargs).images[0]
-                end_time = time.time()
-                self._update_status(f"生成完成 (耗时: {end_time - start_time:.2f}秒)")
-
+            self._update_status("✅ 图片生成成功")
             return image
-            
+
         except Exception as e:
-            error_msg = f"图片生成失败: {str(e)}"
+            error_msg = f"生成图片时出错: {e}"
             self._update_status(error_msg)
             logger.error(error_msg, exc_info=True)
             return None
-    
-    def get_model_info(self) -> Dict[str, Any]:
-        """获取模型信息"""
+
+    def generate_inpainting(self,
+                            prompt: str,
+                            image: Image.Image,
+                            mask_image: Image.Image,
+                            negative_prompt: str = "",
+                            width: int = None,
+                            height: int = None,
+                            num_inference_steps: int = None,
+                            guidance_scale: float = None,
+                            seed: int = None,
+                            strength: float = 0.8) -> Optional[Image.Image]:
+        """
+        使用 Inpainting (图片蒙版) 方式生成图片
+        """
         if not self.model_loaded:
+            self._update_status("模型未加载")
+            return None
+
+        self._update_status("开始使用Inpainting生成图片...")
+
+        # 获取配置
+        config = self.generation_config
+        width = width or config.get("width")
+        height = height or config.get("height")
+        num_inference_steps = num_inference_steps or config.get("steps")
+        guidance_scale = guidance_scale or config.get("cfg_scale")
+
+        # 随机种子
+        if seed is None or seed == -1:
+            seed = random.randint(0, 2**32 - 1)
+        
+        generator = torch.Generator(device=self.device).manual_seed(seed)
+
+        # 进度回调
+        def progress_callback(step_index, timestep, latents):
+            self._update_progress(step_index + 1, num_inference_steps)
+
+        try:
+            # 动态切换到 Inpainting Pipeline
+            if not isinstance(self.pipeline, (StableDiffusionInpaintPipeline, StableDiffusionXLInpaintPipeline)):
+                self._update_status("正在切换到Inpainting模式...")
+                
+                # 确定适合的Inpainting Pipeline类型
+                if isinstance(self.base_pipeline, StableDiffusionXLPipeline):
+                    inpaint_class = StableDiffusionXLInpaintPipeline
+                elif isinstance(self.base_pipeline, StableDiffusionPipeline):
+                    inpaint_class = StableDiffusionInpaintPipeline
+                else:
+                    # 对于SD3等其他类型，可能需要特定处理或不支持
+                    self._update_status(f"当前模型 ({type(self.base_pipeline).__name__}) 可能不支持快速切换到Inpainting模式。")
+                    # 尝试通用加载
+                    try:
+                        self.pipeline = inpaint_class.from_pipe(self.base_pipeline)
+                    except Exception as e:
+                        self._update_status(f"无法切换到Inpainting Pipeline: {e}")
+                        return None
+                
+                self.pipeline = inpaint_class(**self.base_pipeline.components)
+                self._update_status("✅ 成功切换到Inpainting模式")
+
+            with torch.no_grad():
+                # 调整输入图像尺寸
+                image = image.resize((width, height), Image.LANCZOS)
+                mask_image = mask_image.resize((width, height), Image.NEAREST)
+
+                output_image = self.pipeline(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    image=image,
+                    mask_image=mask_image,
+                    width=width,
+                    height=height,
+                    strength=strength,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    callback_steps=1,
+                    callback=progress_callback
+                ).images[0]
+
+            self._update_status("✅ Inpainting图片生成成功")
+            return output_image
+
+        except Exception as e:
+            error_msg = f"Inpainting生成图片时出错: {e}"
+            self._update_status(error_msg)
+            logger.error(error_msg, exc_info=True)
+            return None
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """获取当前加载的模型信息"""
+        if not self.model_loaded or not self.pipeline:
             return {"loaded": False}
         
         info = {
