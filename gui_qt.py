@@ -506,16 +506,13 @@ class SDGeneratorMainWindow(QMainWindow):
         else:
             # 如果模块不可用，显示一个禁用的提示页面
             disabled_tab = QWidget()
-            layout = QVBoxLayout(disabled_tab)
+            disabled_layout = QVBoxLayout(disabled_tab)
             error_message = f"军事模块加载失败: {MILITARY_IMPORT_ERROR}"
-            layout.addWidget(QLabel(error_message))
-            layout.setAlignment(Qt.AlignCenter)
+            disabled_layout.addWidget(QLabel(error_message))
+            disabled_layout.setAlignment(Qt.AlignCenter)
             self.main_tabs.addTab(disabled_tab, "军事功能 (不可用)")
 
-        # 将主选项卡设置为中心部件
-        main_layout.addWidget(self.main_tabs)
-
-        return central_widget
+        return control_widget
 
     def create_traditional_tab(self):
         """创建传统SD生成选项卡"""
@@ -542,11 +539,11 @@ class SDGeneratorMainWindow(QMainWindow):
             # 新的军事场景生成面板 (替换旧的)
             military_panel = MilitaryPanel(self.generator)
             tab_widget.addTab(military_panel, "军事场景生成")
-            
+
             # 保留原有的标注和数据集管理面板
-            annotation_panel = AnnotationPanel(self.generator)
+            annotation_panel = AnnotationPanel()
             tab_widget.addTab(annotation_panel, "自动标注")
-            
+
             dataset_panel = DatasetPanel()
             tab_widget.addTab(dataset_panel, "数据集管理")
 

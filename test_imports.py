@@ -63,7 +63,7 @@ def test_other_imports():
         ("annotation.coco_formatter", "COCOFormatter"),
         ("dataset.dataset_manager", "DatasetManager"),
         ("dataset.statistics", "DatasetStatistics"),
-        ("gui.military_panel", "MilitaryGenerationPanel"),
+        ("gui.military_panel", "MilitaryPanel"),
         ("gui.annotation_panel", "AnnotationPanel"),
         ("gui.dataset_panel", "DatasetPanel"),
     ]
